@@ -23,23 +23,36 @@ What you get: a self-contained test setup to simulate internal Kafka traffic bei
 
 2. Build the project:
    ```bash
-   mvn -T 1C -pl common,producer,broker,client -am package
+   mvn clean package
    ```
-   That creates 3 runnable jars under each module `target/*-jar-with-dependencies.jar`.
+   That creates 3 runnable jars under each module `target/*.jar`.
 
 3. Run in this order:
    - External client:
      ```bash
-     java -jar client/target/client-1.0-SNAPSHOT-jar-with-dependencies.jar
+     java -jar client/target/client-1.0-SNAPSHOT.jar
      ```
    - Broker:
      ```bash
-     java -jar broker/target/broker-1.0-SNAPSHOT-jar-with-dependencies.jar
+     java -jar broker/target/broker-1.0-SNAPSHOT.jar
      ```
    - Producer:
      ```bash
-     java -jar producer/target/producer-1.0-SNAPSHOT-jar-with-dependencies.jar
+     java -jar producer/target/producer-1.0-SNAPSHOT.jar
      ```
+
+   Alternatively, for development, you can run each module directly with Maven. First, build the project from root:
+
+   ```bash
+   mvn clean install
+   ```
+   Then run each module:
+   
+   ```bash
+   mvn -f client/pom.xml spring-boot:run
+   mvn -f broker/pom.xml spring-boot:run
+   mvn -f producer/pom.xml spring-boot:run
+   ```
 
 4. Inspect DB:
    ```bash

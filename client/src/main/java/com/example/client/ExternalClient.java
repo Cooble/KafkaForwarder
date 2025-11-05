@@ -5,13 +5,21 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.java_websocket.server.WebSocketServer;
 import org.java_websocket.WebSocket;
 import org.java_websocket.handshake.ClientHandshake;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 import java.net.InetSocketAddress;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
+@SpringBootApplication
 public class ExternalClient {
     public static void main(String[] args) throws Exception {
+        SpringApplication.run(ExternalClient.class, args);
+        runClient();
+    }
+
+    private static void runClient() throws Exception {
         int port = 8081;
         ObjectMapper mapper = new ObjectMapper();
 

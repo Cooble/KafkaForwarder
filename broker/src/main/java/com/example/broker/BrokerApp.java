@@ -6,6 +6,8 @@ import org.apache.kafka.clients.consumer.*;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.handshake.ServerHandshake;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 import java.net.URI;
 import java.sql.*;
@@ -14,6 +16,7 @@ import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 
+@SpringBootApplication
 public class BrokerApp {
     private static final ObjectMapper mapper = new ObjectMapper();
     private static Connection conn;
@@ -21,6 +24,11 @@ public class BrokerApp {
     private static ConcurrentHashMap<String, WebSocketClient> wsMap = new ConcurrentHashMap<>();
 
     public static void main(String[] args) throws Exception {
+        SpringApplication.run(BrokerApp.class, args);
+        runBroker();
+    }
+
+    private static void runBroker() throws Exception {
         // DB setup
         conn = DriverManager.getConnection("jdbc:postgresql://localhost:5432/brokerdb", "test", "test");
         try (Statement st = conn.createStatement()) {

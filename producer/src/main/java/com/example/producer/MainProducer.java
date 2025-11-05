@@ -4,13 +4,21 @@ import com.example.common.Event;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.kafka.clients.producer.*;
 import org.apache.kafka.common.serialization.StringSerializer;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 import java.util.Properties;
 import java.util.UUID;
 import java.util.Random;
 
+@SpringBootApplication
 public class MainProducer {
     public static void main(String[] args) throws Exception {
+        SpringApplication.run(MainProducer.class, args);
+        runProducer();
+    }
+
+    private static void runProducer() throws Exception {
         String topic = "test-topic";
         Properties props = new Properties();
         props.put("bootstrap.servers", "localhost:9092");
