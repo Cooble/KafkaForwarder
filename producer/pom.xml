@@ -12,9 +12,9 @@
 
   <dependencies>
     <dependency>
-      <groupId>org.apache.kafka</groupId>
-      <artifactId>kafka-clients</artifactId>
-      <version>3.6.0</version>
+      <groupId>org.springframework.kafka</groupId>
+      <artifactId>spring-kafka</artifactId>
+      <version>3.3.10</version>
     </dependency>
     <dependency>
       <groupId>com.example</groupId>
@@ -46,7 +46,7 @@
           </execution>
         </executions>
         <configuration>
-          <mainClass>com.example.producer.MainProducer</mainClass>
+          <mainClass>com.example.producer.Application</mainClass>
         </configuration>
       </plugin>
     </plugins>
