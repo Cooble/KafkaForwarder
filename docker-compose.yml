@@ -2,6 +2,7 @@ name: kafka-forwarder
 
 services:
   kafka:
+    container_name: kafka
     image: apache/kafka:latest
     ports:
       - "9092:9092"
@@ -9,6 +10,7 @@ services:
       .env
 
   postgres:
+    container_name: postgres
     image: postgres:17
     env_file:
       .env
