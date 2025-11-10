@@ -30,7 +30,7 @@ public class ForwarderApp {
 
     private static void runforwarder() throws Exception {
         // DB setup
-        conn = DriverManager.getConnection("jdbc:postgresql://localhost:5432/forwarderdb", "test", "test");
+        conn = DriverManager.getConnection("jdbc:postgresql://localhost:5432/brokerdb", "test", "test");
         try (Statement st = conn.createStatement()) {
             st.execute("CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, payload TEXT, status TEXT)");
         }
