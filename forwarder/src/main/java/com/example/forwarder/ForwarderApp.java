@@ -1,4 +1,4 @@
-package com.example.broker;
+package com.example.forwarder;
 
 import com.example.common.Event;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -17,20 +17,20 @@ import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 
 @SpringBootApplication
-public class BrokerApp {
+public class ForwarderApp {
     private static final ObjectMapper mapper = new ObjectMapper();
     private static Connection conn;
     // map of ws connections by URI (single target here)
     private static ConcurrentHashMap<String, WebSocketClient> wsMap = new ConcurrentHashMap<>();
 
     public static void main(String[] args) throws Exception {
-        SpringApplication.run(BrokerApp.class, args);
-        runBroker();
+        SpringApplication.run(ForwarderApp.class, args);
+        runforwarder();
     }
 
-    private static void runBroker() throws Exception {
+    private static void runforwarder() throws Exception {
         // DB setup
-        conn = DriverManager.getConnection("jdbc:postgresql://localhost:5432/brokerdb", "test", "test");
+        conn = DriverManager.getConnection("jdbc:postgresql://localhost:5432/forwarderdb", "test", "test");
         try (Statement st = conn.createStatement()) {
             st.execute("CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, payload TEXT, status TEXT)");
         }
@@ -42,14 +42,14 @@ public class BrokerApp {
         // Kafka consumer
         Properties props = new Properties();
         props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
-        props.put(ConsumerConfig.GROUP_ID_CONFIG, "broker-group");
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, "forwarder-group");
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props);
         consumer.subscribe(List.of("test-topic"));
 
-        System.out.println("Broker started. Listening to Kafka and forwarding over WebSocket.");
+        System.out.println("forwarder started. Listening to Kafka and forwarding over WebSocket.");
         while (true) {
             ConsumerRecords<String, String> records = consumer.poll(Duration.ofSeconds(1));
             for (ConsumerRecord<String, String> r : records) {

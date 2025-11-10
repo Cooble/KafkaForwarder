@@ -8,7 +8,7 @@
     <version>1.0-SNAPSHOT</version>
   </parent>
   <modelVersion>4.0.0</modelVersion>
-  <artifactId>broker</artifactId>
+  <artifactId>forwarder</artifactId>
 
   <dependencies>
     <dependency>
@@ -56,7 +56,7 @@
           </execution>
         </executions>
         <configuration>
-          <mainClass>com.example.broker.BrokerApp</mainClass>
+          <mainClass>com.example.forwarder.forwarderApp</mainClass>
         </configuration>
       </plugin>
     </plugins>

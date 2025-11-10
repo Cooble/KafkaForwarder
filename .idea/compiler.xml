@@ -6,11 +6,14 @@
         <sourceOutputDir name="target/generated-sources/annotations" />
         <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
         <outputRelativeToContentRoot value="true" />
+        <module name="forwarder" />
         <module name="client" />
         <module name="producer" />
-        <module name="broker" />
         <module name="common" />
       </profile>
     </annotationProcessing>
+    <bytecodeTargetLevel>
+      <module name="broker" target="17" />
+    </bytecodeTargetLevel>
   </component>
 </project>
