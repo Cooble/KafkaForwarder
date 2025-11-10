@@ -1,6 +1,6 @@
-package com.example.broker;
+package com.example.forwarder;
 
-import com.example.broker.db.DbService;
+import com.example.forwarder.db.DbService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Controller;

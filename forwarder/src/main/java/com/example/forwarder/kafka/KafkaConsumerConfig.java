@@ -1,4 +1,4 @@
-package com.example.broker.kafka;
+package com.example.forwarder.kafka;
 
 import com.example.common.InternalData;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
