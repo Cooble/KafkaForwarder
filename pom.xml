@@ -11,7 +11,7 @@
   <modules>
     <module>common</module>
     <module>producer</module>
-    <module>broker</module>
+    <module>forwarder</module>
     <module>client</module>
   </modules>
 

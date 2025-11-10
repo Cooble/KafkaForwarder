@@ -1,4 +1,4 @@
-package com.example.broker;
+package com.example.forwarder;
 
 import org.springframework.stereotype.Service;
 

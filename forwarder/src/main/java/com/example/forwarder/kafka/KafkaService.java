@@ -1,6 +1,6 @@
-package com.example.broker.kafka;
+package com.example.forwarder.kafka;
 
-import com.example.broker.TransformationService;
+import com.example.forwarder.TransformationService;
 import com.example.common.InternalData;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.annotation.KafkaListener;

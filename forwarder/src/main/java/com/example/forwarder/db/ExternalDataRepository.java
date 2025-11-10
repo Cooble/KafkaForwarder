@@ -1,4 +1,4 @@
-package com.example.broker.db;
+package com.example.forwarder.db;
 
 import com.example.common.ExternalData;
 import org.springframework.data.jpa.repository.JpaRepository;
