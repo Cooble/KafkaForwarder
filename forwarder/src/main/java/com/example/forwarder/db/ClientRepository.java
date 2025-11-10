@@ -1,6 +1,6 @@
-package com.example.broker.db;
+package com.example.forwarder.db;
 
-import com.example.broker.model.Client;
+import com.example.forwarder.model.Client;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
