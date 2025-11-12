@@ -2,7 +2,8 @@ name: kafka-forwarder
 
 services:
   kafka:
-    container_name: kafka
+    hostname: broker
+    container_name: broker
     image: apache/kafka:latest
     ports:
       - "9092:9092"
