@@ -18,8 +18,7 @@ import java.util.Map;
 @EnableKafka
 @Configuration
 public class KafkaConsumerConfig {
-    // TODO move to config
-    @Value("localhost:9092")
+    @Value("${kafka.bootstrap}")
     private String bootstrapAddress;
 
     @Bean

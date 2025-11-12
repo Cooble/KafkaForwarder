@@ -1,0 +1,13 @@
+{
+  "properties": [
+    {
+      "name": "kafka.bootstrap",
+      "type": "java.lang.String",
+      "description": "Kafka bootstrap server address."
+    },
+    {
+      "name": "kafka.topics",
+      "type": "java.lang.String[]",
+      "description": "Array of topics to listen."
+    }
+  ] }
