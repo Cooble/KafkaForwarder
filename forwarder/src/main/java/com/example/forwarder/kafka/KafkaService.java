@@ -13,5 +13,6 @@ public class KafkaService {
 
     @KafkaListener(topics = "${kafka.topics}")
     public void listenInternalData(InternalData message) {
+         System.out.println("Received message: " + message);
     }
 }

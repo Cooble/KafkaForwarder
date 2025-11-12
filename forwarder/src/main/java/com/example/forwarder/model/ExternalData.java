@@ -18,7 +18,8 @@ public class ExternalData {
     private String name;
     private String externalNew;
 
-    public ExternalData() {}
+    public ExternalData() {
+    }
 
     public ExternalData(Client client, String msg, String name, String externalNew) {
         this.client = client;
