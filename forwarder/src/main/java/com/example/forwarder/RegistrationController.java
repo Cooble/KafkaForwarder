@@ -14,5 +14,7 @@ public class RegistrationController {
 
     @PostMapping("/registration")
     @ResponseStatus(HttpStatus.OK)
-    public void registerClient() {}
+    public void registerClient() {
+        dbService.saveClient(new com.example.forwarder.model.Client("client" + (int) (Math.random() * 10000), "http://localhost:8080", null));
+    }
 }
