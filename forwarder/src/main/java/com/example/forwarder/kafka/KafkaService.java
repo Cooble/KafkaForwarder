@@ -11,8 +11,8 @@ public class KafkaService {
     @Autowired
     private TransformationService transformationService;
 
-    // TODO move to config
-    @KafkaListener(topics = "record")
+    @KafkaListener(topics = "${kafka.topics}")
     public void listenInternalData(InternalData message) {
+         System.out.println("Received message: " + message);
     }
 }

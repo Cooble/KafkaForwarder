@@ -1,3 +1,4 @@
 package com.example.common;
 
-public record InternalData() { }
+public record InternalData(String msg, String name) {
+}
