@@ -9,7 +9,6 @@
         <module name="forwarder" />
         <module name="client" />
         <module name="producer" />
-        <module name="broker" />
         <module name="common" />
       </profile>
     </annotationProcessing>

@@ -18,7 +18,7 @@ services:
     env_file:
       .env
     ports:
-      - "5000:5432" # Port conflict??? Spring doesn't connect when port is set to 5432 (wslrelay.exe is stealing port 5432 on localhost (!) )
+      - "5001:5432" # Port conflict??? Spring doesn't connect when port is set to 5432 (wslrelay.exe is stealing port 5432 on localhost (!) )
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U test -d brokerdb" ]
       interval: 5s
