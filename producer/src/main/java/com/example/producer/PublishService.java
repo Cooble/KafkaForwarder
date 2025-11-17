@@ -16,7 +16,7 @@ public class PublishService {
 
     private int count = 0;
 
-    @Scheduled(fixedRate = 3000)
+    @Scheduled(fixedRateString = "${producer.rate.period.ms}")
     public void scheduledEvent() {
         count++;
         sendMessage(new InternalData("test", "name" + count));

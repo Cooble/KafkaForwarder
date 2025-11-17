@@ -1,18 +1,26 @@
 package com.example.client;
 
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpStatus;
-import org.springframework.stereotype.Controller;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.ResponseStatus;
+import com.example.common.ExternalData;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
 
-@Controller
+@RestController
 public class DataController {
-    @Autowired
-    private SimulationService simulationService;
+    private static final Logger log = LoggerFactory.getLogger(DataController.class);
 
     @PostMapping("/data")
-    @ResponseStatus(HttpStatus.OK)
-    public void receiveData() {
+    public ResponseEntity<String> receiveData(@RequestBody ExternalData data) {
+        log.info("Received data: msg={}, name={}, externalNew={}",
+                data.msg(), data.name(), data.externalNew());
+
+        // Process the data
+        log.info("Processing data: {}", data.name());
+
+        // Return 200 OK = confirmation of receipt
+        // No need to make another HTTP call back!
+        return ResponseEntity.ok("Data received");
     }
 }
+

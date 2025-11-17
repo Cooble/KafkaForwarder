@@ -23,11 +23,16 @@ public class RegistrationController {
     @PostMapping("/registration")
     @ResponseStatus(HttpStatus.OK)
     public void registerClient(HttpServletRequest request, @RequestBody RegistrationRequest registrationRequest) {
-        log.info("Received registration request: {} from client {}", registrationRequest, request.getRemoteAddr());
+        String clientIp = request.getRemoteAddr();
+        log.info("Received registration request from client {} at {}: topics={}",
+                clientIp, registrationRequest.clientUrl(), registrationRequest.topics());
 
-        dbService.saveClient(new Client(request.getRemoteAddr(), registrationRequest.clientUrl(), registrationRequest.topics()));
+        dbService.upsertClient(new Client(clientIp, registrationRequest.clientUrl(), registrationRequest.topics()));
+
+        log.info("Client {} registered/updated successfully", clientIp);
     }
 
-    // TODO: Make an "unregister" method? Or a more "REST" way of registering / unregistering
+    // TODO: Make an "unregister" method? or maybe screw it, its a demo
+
 
 }
