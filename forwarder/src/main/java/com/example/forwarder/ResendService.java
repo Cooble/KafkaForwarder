@@ -1,0 +1,83 @@
+package com.example.forwarder;
+
+import com.example.forwarder.db.DbService;
+import com.example.forwarder.model.Client;
+import com.example.forwarder.model.DeliveryStatus;
+import com.example.forwarder.model.ExternalDataTableEntry;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
+
+@Service
+public class ResendService {
+    @Autowired
+    private DbService dbService;
+    @Autowired
+    private SendService sendService;
+    @Autowired
+    private DeliveryResultHandler deliveryResultHandler;
+
+    @Value("${forwarder.retry.interval.ms:5000}")
+    private int retryIntervalMs;
+
+    @Value("${forwarder.retry.max.attempts:5}")
+    private int maxAttempts;
+
+    private static final Logger log = LoggerFactory.getLogger(ResendService.class);
+
+    @Scheduled(fixedDelayString = "${forwarder.retry.check.interval.ms:10000}")
+    public void resendPendingDeliveries() {
+        log.debug("Checking for pending deliveries to retry...");
+
+        List<DeliveryStatus> pendingDeliveries = dbService.getPendingDeliveries(retryIntervalMs / 1000, maxAttempts);
+
+        if (!pendingDeliveries.isEmpty()) {
+            log.info("Found {} pending deliveries to retry (ordered by sequence number)", pendingDeliveries.size());
+        }
+
+        for (DeliveryStatus status : pendingDeliveries) {
+            Optional<ExternalDataTableEntry> dataOpt = dbService.getExternalDataById(status.getExternalDataId());
+            Optional<Client> clientOpt = dbService.getClientById(status.getClientId());
+
+            if (dataOpt.isEmpty() || clientOpt.isEmpty()) {
+                log.warn("Data or client not found for delivery status {}. Skipping.", status.getId());
+                continue;
+            }
+
+            ExternalDataTableEntry data = dataOpt.get();
+            Client client = clientOpt.get();
+
+            log.info("Retrying delivery of data {} to client {} (attempt {}/{})",
+                    data.getId(), client.getClientIdentifier(),
+                    status.getAttemptCount() + 1, maxAttempts);
+
+            // Update attempt info before sending
+            status.setLastAttempt(LocalDateTime.now());
+            status.incrementAttemptCount();
+
+            sendService.sendToClient(data, client).thenAccept(result -> {
+                deliveryResultHandler.handleSendResult(result, status, client.getClientIdentifier());
+
+                // Log if max attempts reached
+                if (!result.success() && status.getAttemptCount() >= maxAttempts) {
+                    log.error("Max retry attempts ({}) reached for data {} to client {}. Giving up.",
+                            maxAttempts, data.getId(), client.getClientIdentifier());
+                }
+            }).exceptionally(ex -> {
+                deliveryResultHandler.handleSendException(data.getId(), client.getClientIdentifier(), status, ex);
+                return null;
+            });
+        }
+
+        // Cleanup failed deliveries that exceeded max attempts
+        dbService.deleteFailedDeliveries(maxAttempts);
+    }
+}
+

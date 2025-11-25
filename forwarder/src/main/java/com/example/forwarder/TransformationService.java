@@ -1,13 +1,19 @@
 package com.example.forwarder;
 
-import com.example.forwarder.db.DbService;
-import org.springframework.beans.factory.annotation.Autowired;
+import com.example.common.InternalData;
+import com.example.forwarder.model.ExternalDataTableEntry;
 import org.springframework.stereotype.Service;
 
 @Service
 public class TransformationService {
-    @Autowired
-    private WebSocketService webSocketService;
-    @Autowired
-    private DbService dbService;
+
+    public ExternalDataTableEntry transform(InternalData data, String topic, Long sequenceNumber) {
+        return new ExternalDataTableEntry(
+                topic,
+                data.msg(),
+                data.name(),
+                "externalNewValue",
+                sequenceNumber
+        );
+    }
 }

@@ -1,8 +1,4 @@
 package com.example.common;
 
-import jakarta.persistence.Entity;
-import jakarta.persistence.Table;
-
-@Entity
-@Table(name = "externalData")
-public record ExternalData() { }
+public record ExternalData(String msg, String name, String externalNew) {
+}

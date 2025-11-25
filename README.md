@@ -1,63 +1,12 @@
-# Kafka → Broker → External WebSocket Client demo (Java, Maven, Docker)
+# Kafka Forwarder HTTP version
 
-What you get: a self-contained test setup to simulate internal Kafka traffic being forwarded by a broker to an external client over WebSocket. The broker persists events to Postgres until the external client ACKs them, then broker deletes them.
+## Useful tools:
+- Kafka testing tool for Linux (kafkacat):
+  - https://github.com/edenhill/kcat
+  - sudo apt-get install kafkacat
+    - Use WSL Ubuntu on windows
+  - `kafkacat -b localhost:9092 -t topic1`
 
-## Components
-- Kafka + Zookeeper (Docker)
-- Postgres (Docker)
-- Producer (Java) — produces JSON events into Kafka (`test-topic`)
-- Broker (Java) — consumes Kafka, stores events in Postgres, forwards to external client via WebSocket, deletes on ACK
-- External Client (Java) — WebSocket server; receives events and sends back ACK JSON `{"id":"...", "status":"ACK"}`
-
-## Prereqs
-- Docker & Docker Compose (Windows)
-- Java 17
-- Maven
-
-## Quick start
-1. Start Docker services:
-   ```bash
-   docker-compose up -d
-   ```
-   Wait a few seconds for services to become ready.
-
-2. Build the project:
-   ```bash
-   mvn clean package
-   ```
-   That creates 3 runnable jars under each module `target/*.jar`.
-
-3. Run in this order:
-   - External client:
-     ```bash
-     java -jar client/target/client-1.0-SNAPSHOT.jar
-     ```
-   - Broker:
-     ```bash
-     java -jar broker/target/broker-1.0-SNAPSHOT.jar
-     ```
-   - Producer:
-     ```bash
-     java -jar producer/target/producer-1.0-SNAPSHOT.jar
-     ```
-
-   Alternatively, for development, you can run each module directly with Maven. First, build the project from root:
-
-   ```bash
-   mvn clean install
-   ```
-   Then run each module:
-   
-   ```bash
-   mvn -f client/pom.xml spring-boot:run
-   mvn -f broker/pom.xml spring-boot:run
-   mvn -f producer/pom.xml spring-boot:run
-   ```
-
-4. Inspect DB:
-   ```bash
-   docker exec -it $(docker ps -qf "ancestor=postgres:15") psql -U test -d brokerdb -c "select * from events;"
-   ```
-
-## Notes
-- This is a **demo**. For production: add retries/backoff, durable websocket handling, TLS, idempotency checks, better schema, metrics, and proper docker network configuration.
+## Useful documentation:
+- Setting up Kafka docker container:
+  - https://developer.confluent.io/confluent-tutorials/kafka-on-docker/
