@@ -21,8 +21,6 @@ public class ResendService {
     private DbService dbService;
     @Autowired
     private SendService sendService;
-    @Autowired
-    private DeliveryResultHandler deliveryResultHandler;
 
     @Value("${forwarder.retry.interval.ms:5000}")
     private int retryIntervalMs;
@@ -62,18 +60,7 @@ public class ResendService {
             status.setLastAttempt(LocalDateTime.now());
             status.incrementAttemptCount();
 
-            sendService.sendToClient(data, client).thenAccept(result -> {
-                deliveryResultHandler.handleSendResult(result, status, client.getClientIdentifier());
-
-                // Log if max attempts reached
-                if (!result.success() && status.getAttemptCount() >= maxAttempts) {
-                    log.error("Max retry attempts ({}) reached for data {} to client {}. Giving up.",
-                            maxAttempts, data.getId(), client.getClientIdentifier());
-                }
-            }).exceptionally(ex -> {
-                deliveryResultHandler.handleSendException(data.getId(), client.getClientIdentifier(), status, ex);
-                return null;
-            });
+            sendService.sendToClient(client.getClientIdentifier(), data);
         }
 
         // Cleanup failed deliveries that exceeded max attempts
