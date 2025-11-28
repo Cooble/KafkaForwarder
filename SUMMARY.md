@@ -1,13 +1,13 @@
 # Kafka WebSocket Demo - System Summary
 
-**Project:** Event Distribution System with Kafka, PostgreSQL, and HTTP Forwarding  
-**Last Updated:** November 17, 2025
+**Project:** Event Distribution System with Kafka, PostgreSQL, and WebSocket Forwarding  
+**Last Updated:** November 28, 2025
 
 ---
 
 ## 🏗️ System Architecture Overview
 
-This is a **reliable event distribution system** that receives events from Kafka and forwards them to multiple HTTP clients with **guaranteed delivery**, **ordering**, and **automatic retry**.
+This is a **reliable event distribution system** that receives events from Kafka and forwards them to multiple WebSocket clients with **guaranteed delivery**, **ordering**, and **automatic retry**.
 
 ```
 ┌──────────┐      ┌───────┐      ┌───────────┐      ┌────────────┐
@@ -25,10 +25,11 @@ This is a **reliable event distribution system** that receives events from Kafka
 - ✅ **At-least-once delivery** guarantee to clients
 - ✅ **Ordered delivery** using Kafka offsets as sequence numbers
 - ✅ **Automatic retry** with configurable attempts and intervals
-- ✅ **HTTP 200 = Confirmation** (no separate API call needed)
-- ✅ **Client registration** with topic subscription
+- ✅ **WebSocket STOMP confirmation** (via /app/confirm)
+- ✅ **Client registration** with topic subscription via WebSocket
 - ✅ **Database persistence** for crash recovery
 - ✅ **Idempotent operations** (client re-registration)
+- ✅ **Disconnect handling** - no attempts to disconnected clients
 
 ---
 
@@ -106,16 +107,16 @@ Clients that receive forwarded events.
 @Entity
 @Table(
     uniqueConstraints = {
-        @UniqueConstraint(columnNames = "clientIdentifier")
+        @UniqueConstraint(columnNames = "client_identifier")
     },
     indexes = {
-        @Index(name = "idx_client_identifier", columnList = "clientIdentifier")
+        @Index(name = "idx_client_identifier", columnList = "client_identifier")
     }
 )
 public class Client {
     private Long id;                        // Primary key
-    private String clientIdentifier;        // IP address (unique)
-    private String clientUrl;               // HTTP endpoint URL
+    private String clientIdentifier;        // Unique client identifier
+    private String sessionId;               // WebSocket session ID (null if disconnected)
     private List<String> subscribedTopics;  // Kafka topics subscribed to
 }
 ```
@@ -124,10 +125,11 @@ public class Client {
 
 **Lifecycle:**
 1. Created on first registration
-2. Updated (upsert) on subsequent registrations from same IP
-3. Persists across forwarder restarts
+2. Updated (upsert) on subsequent registrations from same client
+3. sessionId set on connect, cleared on disconnect
+4. Persists across forwarder restarts
 
-**Unique Constraint:** `clientIdentifier` (IP address) - prevents duplicate client registrations
+**Unique Constraint:** `client_identifier` - prevents duplicate client registrations
 
 ---
 
@@ -188,43 +190,45 @@ DeliveryStatus: N rows (one per subscribed client)
 SendService
   │
   ├─ Creates ExternalData payload (common model)
-  ├─ HTTP POST to client.clientUrl + "/data"
-  │   └─ Body: { "msg": "...", "name": "...", "externalNew": "..." }
-  │   └─ Timeout: 10000ms (configurable: forwarder.client.timeout.ms)
+  ├─ WebSocket STOMP send to /queue/data/{clientId}
+  │   └─ Body: { "id": "...", "msg": "...", "name": "...", "externalNew": "..." }
   │
-  ├─ SUCCESS (HTTP 200):
-  │   └─ DeliveryResultHandler.handleSendResult()
-  │       └─ dbService.markAsConfirmedByClientId(dataId, clientId)
-  │           ├─ Sets DeliveryStatus.confirmed = true
-  │           └─ If ALL clients confirmed:
-  │               └─ DELETE ExternalDataTableEntry + all DeliveryStatus
+  ├─ SUCCESS (client receives and confirms):
+  │   └─ Client sends STOMP message to /app/confirm
+  │       └─ ConfirmationController.handleConfirmation()
+  │           └─ dbService.markAsConfirmedByClientId(dataId, clientId)
+  │               ├─ Sets DeliveryStatus.confirmed = true
+  │               └─ If ALL clients confirmed:
+  │                   └─ DELETE ExternalDataTableEntry + all DeliveryStatus
   │
-  └─ FAILURE (timeout, error, non-200):
-      └─ DeliveryResultHandler.handleSendResult()
-          └─ status.setLastAttempt(now)
-          └─ status.incrementAttemptCount()
-          └─ dbService.updateDeliveryStatus(status)
+  └─ FAILURE (client disconnected):
+      └─ No send attempt (checked sessionId != null)
 ```
 
-**Code:** `forwarder/SendService.java`, `forwarder/DeliveryResultHandler.java`
+**Code:** `forwarder/SendService.java`, `forwarder/ConfirmationController.java`
 
-**Key Point:** HTTP 200 response = automatic confirmation. No separate API call needed!
+**Key Point:** STOMP confirmation message = confirmation signal!
 
 ---
 
 ### **Phase 4: Client Reception**
 
 ```
-Client DataController (Port 8082)
+Client WebSocketService (Port 8082)
   │
-  ├─ POST /data receives ExternalData
+  ├─ Connects to WebSocket at forwarder:8080/ws
+  ├─ Subscribes to /user/queue/data (but mapped to /queue/data/{clientId})
+  ├─ Sends registration STOMP message to /app/register
+  │   └─ Body: { "clientIdentifier": "...", "topics": ["topic1"] }
+  │
+  ├─ Receives ExternalData via STOMP
   ├─ Logs the received data
   ├─ Processes/stores the data (application-specific)
-  └─ Returns HTTP 200 OK
-      └─ This 200 is the confirmation signal!
+  └─ Sends confirmation STOMP message to /app/confirm
+      └─ Body: { "id": "...", "clientIdentifier": "..." }
 ```
 
-**Code:** `client/DataController.java`
+**Code:** `client/WebSocketService.java`
 
 ---
 
@@ -242,6 +246,8 @@ ResendService (Scheduled)
   │   └─ ORDER BY sequenceNumber ASC  ← Maintains order!
   │
   ├─ For each pending delivery:
+  │   ├─ Check if client is connected (sessionId != null)
+  │   │   └─ Skip if disconnected
   │   ├─ Update lastAttempt = now
   │   ├─ Increment attemptCount
   │   ├─ Send to client (same as Phase 3)
@@ -296,7 +302,7 @@ ResendService (Scheduled)
 ├─────────────────────────────┤    │
 │ id (PK)                     │────┘
 │ clientIdentifier UNIQUE     │
-│ clientUrl                   │
+│ sessionId                   │
 │ subscribedTopics (JSON)     │
 └─────────────────────────────┘
 ```
@@ -323,15 +329,16 @@ ResendService (Scheduled)
 ### **Forwarder Module** (The Core)
 - **KafkaService** - Consumes from Kafka, orchestrates flow
 - **TransformationService** - Transforms InternalData → ExternalDataTableEntry
-- **SendService** - HTTP client to send data to clients
-- **DeliveryResultHandler** - Centralized send result handling
+- **SendService** - WebSocket STOMP messaging to send data to clients
 - **ResendService** - Scheduled retry of failed deliveries
-- **RegistrationController** - Accepts client registrations
+- **RegistrationController** - Accepts client registrations via STOMP
+- **ConfirmationController** - Handles client confirmations via STOMP
+- **DisconnectEventListener** - Handles WebSocket disconnect events
+- **WebSocketConfig** - WebSocket broker configuration
 - **DbService** - Database operations (CRUD + business logic)
 
 ### **Client Module**
-- **DataController** - Receives forwarded events
-- **RegistrationService** - Auto-registers with forwarder on startup
+- **WebSocketService** - Manages WebSocket connection, registration, and data reception
 
 ---
 
@@ -354,7 +361,7 @@ ResendService (Scheduled)
 
 ### **4. Idempotent Operations**
 - Client re-registration updates existing record (upsert)
-- Duplicate confirmation ignored (not necessary for now, we are using HTTP 200 = confirmation)
+- Duplicate confirmation ignored (not necessary for now, we are using STOMP confirmation)
 - Safe to restart any component
 
 ### **5. Client Registration Retry**
@@ -362,10 +369,11 @@ ResendService (Scheduled)
 - Linear backoff: 2s, 4s, 6s, 8s, 10s
 - Handles forwarder temporary unavailability during startup
 
-### **6. HTTP 200 = Confirmation**
-- Simplifies client implementation
-- Single HTTP round-trip instead of two
-- Client doesn't need to know event IDs
+### **6. Disconnect Handling**
+- WebSocket disconnect events clear `sessionId` in Client table
+- Send and resend operations skip clients with `sessionId = null`
+- Prevents wasted attempts on disconnected clients
+- Clients reconnect and re-register automatically
 
 ---
 
@@ -393,8 +401,8 @@ forwarder.retry.check.interval.ms=5000      # Retry check frequency
 forwarder.retry.interval.ms=5000            # Wait before retry
 forwarder.retry.max.attempts=5              # Max attempts per delivery
 
-# Client Communication
-forwarder.client.timeout.ms=10000           # HTTP timeout
+# WebSocket
+# No additional config needed - uses Spring defaults
 ```
 
 ### **Producer** (`producer/application.properties`)
@@ -409,8 +417,7 @@ producer.rate.period.ms=2000                # Event generation rate
 
 ```properties
 server.port=8082
-forwarder.url=http://localhost:8081
-client.url=http://localhost:8082
+forwarder.url=ws://localhost:8081/ws        # WebSocket URL
 client.subscribed.topics=topic1             # Comma-separated topics
 client.auto.register=true                   # Auto-register on startup
 
@@ -421,44 +428,64 @@ client.registration.retry.delay.ms=2000
 
 ---
 
-## 🌐 API Endpoints
+## 🌐 WebSocket STOMP Endpoints
 
 ### **Forwarder (Port 8081)**
 
-#### `POST /registration`
-Register a client to receive events.
+#### WebSocket Endpoint: `/ws`
+Main WebSocket connection endpoint with SockJS fallback.
 
-**Request:**
+#### STOMP Destinations:
+
+**Client Registration:**
+- **Destination:** `/app/register`
+- **Method:** STOMP SEND
+- **Request:**
 ```json
 {
-  "clientUrl": "http://localhost:8082",
+  "clientIdentifier": "client1",
   "topics": ["topic1", "topic2"]
 }
 ```
 
-**Response:** `200 OK`
-
-**Behavior:** Upserts client (updates if already exists based on IP)
-
----
-
-### **Client (Port 8082)**
-
-#### `POST /data`
-Receive forwarded event from forwarder.
-
-**Request:**
+**Client Confirmation:**
+- **Destination:** `/app/confirm`
+- **Method:** STOMP SEND
+- **Request:**
 ```json
 {
+  "id": 123,
+  "clientIdentifier": "client1"
+}
+```
+
+**Data Reception (by clients):**
+- **Subscription:** `/user/queue/data`
+- **Method:** STOMP SUBSCRIBE
+- **Response:**
+```json
+{
+  "id": 123,
   "msg": "test",
   "name": "name123",
   "externalNew": "externalNewValue"
 }
 ```
 
-**Response:** `200 OK` = Confirmation
+**Behavior:** 
+- Registration upserts client (updates if already exists)
+- Confirmation marks delivery as successful
+- Data sent to `/queue/data/{clientId}` internally
 
-**Note:** The HTTP 200 response automatically confirms receipt. No additional API call needed.
+---
+
+### **Client (Port 8082)**
+
+The client is a WebSocket STOMP client that:
+- Connects to forwarder's `/ws` endpoint
+- Subscribes to `/user/queue/data` for receiving data
+- Sends registration to `/app/register`
+- Sends confirmations to `/app/confirm`
 
 ---
 
@@ -471,9 +498,14 @@ All critical query paths should be indexed, change `model/` classes accordingly:
 - Client lookups: `(clientIdentifier)`
 - Ordering: `(sequenceNumber)`
 
-### **Async HTTP Calls**
-- WebClient used for non-blocking HTTP requests
-- CompletableFuture for async confirmation handling
+### **WebSocket Messaging**
+- STOMP over WebSocket for real-time bidirectional communication
+- Automatic SockJS fallback for browser compatibility
+- Persistent connections reduce overhead compared to HTTP polling
+
+### **Async STOMP Sends**
+- SimpMessagingTemplate for non-blocking message sending
+- No blocking on client confirmation (fire-and-forget with retry)
 - Doesn't block Kafka consumption
 
 ### **Batch Cleanup**
@@ -510,11 +542,16 @@ spring.datasource.hikari.connectionTimeout=20000
 - Up to 5 attempts before giving up
 
 ### **5. Forwarder Down During Client Startup**
-- Client retries registration up to 5 times
-- Linear backoff between attempts
-- Logs error if all attempts fail
+- Client retries WebSocket connection automatically
+- Spring WebSocket client handles reconnection
+- Logs error if connection fails
 
-### **6. Duplicate Client Registration**
+### **6. WebSocket Disconnect**
+- DisconnectEventListener clears sessionId
+- Send operations skip disconnected clients
+- Client can reconnect and re-register
+
+### **7. Duplicate Client Registration**
 - Unique constraint on `clientIdentifier`
 - Upsert logic updates existing record
 
@@ -549,9 +586,9 @@ mvn spring-boot:run -pl client
 ```
 
 ### **3. Observe Logs**
-- **Producer:** Sends event every 2 seconds
-- **Forwarder:** Receives → Transforms → Sends → Confirms
-- **Client:** Receives and logs data
+- **Producer:** Sends event every 2 seconds to Kafka
+- **Forwarder:** Receives → Transforms → Sends via WebSocket → Receives confirmations
+- **Client:** Connects via WebSocket, receives and confirms data
 
 ---
 
@@ -586,11 +623,9 @@ mvn spring-boot:run -pl client
 
 ## 🎓 Design Decisions
 
-### **Why HTTP 200 = Confirmation?**
-- **Simpler:** No separate confirmation API call
-- **Faster:** Single round-trip instead of two
-- **RESTful:** Status codes have semantic meaning
-- **Less code:** Client doesn't need WebClient
+### **Why STOMP Confirmation?**
+- **Integrated:** Uses same WebSocket connection
+- **Real-time:** Immediate confirmation via messaging
 
 ### **Why Store Kafka Offset as sequenceNumber?**
 - **Ordering:** Guarantees FIFO delivery even after crashes
@@ -611,19 +646,20 @@ mvn spring-boot:run -pl client
 
 ## 📝 Summary
 
-This system provides **reliable, ordered event distribution** from Kafka to multiple HTTP clients with:
+This system provides **reliable, ordered event distribution** from Kafka to multiple WebSocket clients with:
 - ✅ Database-backed persistence
 - ✅ Automatic retry with configurable limits
 - ✅ Order preservation via Kafka offsets
-- ✅ Simple HTTP 200 confirmation
+- ✅ STOMP confirmation over WebSocket
 - ✅ Client registration and topic subscription
 - ✅ Crash recovery and idempotent operations
+- ✅ Disconnect handling for efficiency
 ---
 
 ## Actual TODOs (not generated by LLM)
 - [ ] Remove PK from DeliveryStatus since we use composite (externalDataId, clientId)
 - [ ] Batch client resend instead of one-by-one
-- [ ] Try the Websocket approach
+- [x] Try the Websocket approach
 - [ ] Implement InternalData -> ExternalData transformation logic
 - [ ] InternalData generator (1kB)
 - [ ] Load testing (for now change `producer.rate.period.ms=2000`)

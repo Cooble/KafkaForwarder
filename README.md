@@ -1,4 +1,4 @@
-# Kafka Forwarder HTTP version
+# Kafka Forwarder WebSocket version
 
 ## Useful tools:
 - Kafka testing tool for Linux (kafkacat):
