@@ -51,14 +51,16 @@ public class KafkaService {
             return;
         }
 
-        // 4. Send to topic (broadcast to all subscribers)
-        sendService.sendToTopic(topic, externalDataTableEntry);
-
-        // 5. Create delivery status for each client and handle as sent (but wait for confirmation)
-        for (Client client : subscribedClients) {
-            DeliveryStatus status = dbService.createDeliveryStatus(externalDataTableEntry.getId(), client.getId());
-            log.info("Created delivery status for client {} and data {}",
-                    client.getClientIdentifier(), externalDataTableEntry.getId());
+        // 4. Send to clients and create delivery status for each one (wait for confirmation)
+        for (final Client client : subscribedClients) {
+            sendService.sendToClient(client.getClientIdentifier(), externalDataTableEntry);
+            dbService.createDeliveryStatus(externalDataTableEntry.getId(), client.getId());
+            
+            log.info(
+                    "Created delivery status for client {} and data {}",
+                    client.getClientIdentifier(),
+                    externalDataTableEntry.getId()
+            );
         }
     }
 }

@@ -17,16 +17,13 @@ public class ConfirmationController {
     private static final Logger log = LoggerFactory.getLogger(ConfirmationController.class);
 
     @MessageMapping("/confirm")
-    public void confirmDelivery(@Payload ConfirmationRequest request) {
-        log.info("Received WS confirmation for data ID {} from client {}",
-                request.dataId(), request.clientIdentifier());
+    public void confirmDelivery(@Payload final ConfirmationRequest request) {
+        log.info("Received WS confirmation for data ID {} from client {}", request.dataId(), request.clientIdentifier());
 
         if (dbService.markAsConfirmed(request.dataId(), request.clientIdentifier())) {
-            log.info("Successfully confirmed delivery of data {} to client {}",
-                    request.dataId(), request.clientIdentifier());
+            log.info("Successfully confirmed delivery of data {} to client {}", request.dataId(), request.clientIdentifier());
         } else {
-            log.warn("Failed to confirm delivery - data or client not found: data={}, client={}",
-                    request.dataId(), request.clientIdentifier());
+            log.warn("Failed to confirm delivery - data or client not found: data={}, client={}", request.dataId(), request.clientIdentifier());
         }
     }
 }

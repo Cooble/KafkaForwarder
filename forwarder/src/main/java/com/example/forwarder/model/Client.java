@@ -1,5 +1,6 @@
 package com.example.forwarder.model;
 
+import com.example.common.RegistrationRequest;
 import jakarta.persistence.*;
 
 import java.util.List;
@@ -21,19 +22,15 @@ public class Client {
     @Column(name = "client_identifier")
     private String clientIdentifier;
 
-    @Column(name = "client_url")
-    private String clientUrl;
-
     @ElementCollection(fetch = FetchType.EAGER)
     private List<String> subscribedTopics;
 
-    public Client() {
-    }
+    // for Hibernate
+    public Client() {}
 
-    public Client(String clientIdentifier, String clientUrl, List<String> subscribedTopics) {
-        this.clientIdentifier = clientIdentifier;
-        this.clientUrl = clientUrl;
-        this.subscribedTopics = subscribedTopics;
+    public Client(final RegistrationRequest request) {
+        clientIdentifier = request.clientIdentifier();
+        subscribedTopics = request.topics();
     }
 
     public Long getId() {
@@ -50,14 +47,6 @@ public class Client {
 
     public void setClientIdentifier(String clientIdentifier) {
         this.clientIdentifier = clientIdentifier;
-    }
-
-    public String getClientUrl() {
-        return clientUrl;
-    }
-
-    public void setClientUrl(String clientUrl) {
-        this.clientUrl = clientUrl;
     }
 
     public List<String> getSubscribedTopics() {

@@ -17,19 +17,6 @@ public class SendService {
         this.messagingTemplate = messagingTemplate;
     }
 
-    public void sendToTopic(String topic, ExternalDataTableEntry data) {
-        log.info("Sending data {} to topic {}", data.getId(), topic);
-
-        final var payload = new ExternalData(
-            data.getId(),
-            data.getMsg(),
-            data.getName(),
-            data.getExternalNew()
-        );
-
-        messagingTemplate.convertAndSend("/topic/" + topic, payload);
-    }
-
     public void sendToClient(String clientId, ExternalDataTableEntry data) {
         log.info("Sending data {} to client {}", data.getId(), clientId);
 
@@ -40,6 +27,6 @@ public class SendService {
             data.getExternalNew()
         );
 
-        messagingTemplate.convertAndSendToUser(clientId, "/queue/data", payload);
+        messagingTemplate.convertAndSend("/queue/data/" + clientId, payload);
     }
 }

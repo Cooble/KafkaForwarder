@@ -31,9 +31,6 @@ public class WebSocketService {
     @Value("${forwarder.url}")
     private String forwarderUrl;
 
-    @Value("${client.url}")
-    private String clientUrl;
-
     @Value("${client.subscribed.topics}")
     private String subscribedTopicsStr;
 
@@ -54,18 +51,19 @@ public class WebSocketService {
         try {
             stompSession = stompClient.connectAsync(forwarderUrl, new StompSessionHandlerAdapter() {
                 @Override
-                public void afterConnected(StompSession session, StompHeaders connectedHeaders) {
+                public void afterConnected(final StompSession session, final StompHeaders connectedHeaders) {
                     log.info("Connected to WebSocket at {}", forwarderUrl);
 
-                    final var topics = Arrays.asList(subscribedTopicsStr.split(","));
+                    final var topics = Arrays
+                            .stream(subscribedTopicsStr.split(","))
+                            .peek(topic -> {
+                                session.subscribe("/topic/" + topic, this);
+                                log.info("Subscribed to topic: {}", topic);
+                            })
+                            .toList();
                     
-                    for (final var topic : topics) {
-                        session.subscribe("/topic/" + topic, this);
-                        log.info("Subscribed to topic: {}", topic);
-                    }
-
                     // Subscribe to user queue for retries
-                    session.subscribe("/user/queue/data", this);
+                    session.subscribe("/queue/data/" + clientIdentifier, this);
 
                     final var regRequest = new RegistrationRequest(clientIdentifier, topics);
                     
@@ -74,10 +72,10 @@ public class WebSocketService {
                 }
 
                 @Override
-                public void handleFrame(StompHeaders headers, Object payload) {
+                public void handleFrame(final StompHeaders headers, final Object payload) {
                     if (payload instanceof ExternalData data) {
                         log.info(
-                                "Received data via WS: id={}, msg={}, name={}, externalNew={}",
+                                "Received data: id={}, msg={}, name={}, externalNew={}",
                                 data.id(),
                                 data.msg(),
                                 data.name(),

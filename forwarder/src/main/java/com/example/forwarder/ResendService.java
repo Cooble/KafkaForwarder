@@ -34,27 +34,30 @@ public class ResendService {
     public void resendPendingDeliveries() {
         log.debug("Checking for pending deliveries to retry...");
 
-        List<DeliveryStatus> pendingDeliveries = dbService.getPendingDeliveries(retryIntervalMs / 1000, maxAttempts);
+        final List<DeliveryStatus> pendingDeliveries = dbService.getPendingDeliveries(retryIntervalMs / 1000, maxAttempts);
 
         if (!pendingDeliveries.isEmpty()) {
             log.info("Found {} pending deliveries to retry (ordered by sequence number)", pendingDeliveries.size());
         }
 
-        for (DeliveryStatus status : pendingDeliveries) {
-            Optional<ExternalDataTableEntry> dataOpt = dbService.getExternalDataById(status.getExternalDataId());
-            Optional<Client> clientOpt = dbService.getClientById(status.getClientId());
+        for (final DeliveryStatus status : pendingDeliveries) {
+            final Optional<ExternalDataTableEntry> dataOpt = dbService.getExternalDataById(status.getExternalDataId());
+            final Optional<Client> clientOpt = dbService.getClientById(status.getClientId());
 
-            if (dataOpt.isEmpty() || clientOpt.isEmpty()) {
-                log.warn("Data or client not found for delivery status {}. Skipping.", status.getId());
+            if (dataOpt.isEmpty()) {
+                log.warn("Data not found for delivery status {}. Skipping.", status.getId());
+                continue;
+            }
+            
+            if (clientOpt.isEmpty()) {
+                log.warn("Client not found for delivery status {}. Skipping.", status.getId());
                 continue;
             }
 
-            ExternalDataTableEntry data = dataOpt.get();
-            Client client = clientOpt.get();
+            final ExternalDataTableEntry data = dataOpt.get();
+            final Client client = clientOpt.get();
 
-            log.info("Retrying delivery of data {} to client {} (attempt {}/{})",
-                    data.getId(), client.getClientIdentifier(),
-                    status.getAttemptCount() + 1, maxAttempts);
+            log.info("Retrying delivery of data {} to client {} (attempt {}/{})", data.getId(), client.getClientIdentifier(), status.getAttemptCount() + 1, maxAttempts);
 
             // Update attempt info before sending
             status.setLastAttempt(LocalDateTime.now());

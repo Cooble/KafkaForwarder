@@ -28,13 +28,13 @@ public class DbService {
         return externalDataRepository.save(data);
     }
 
-    public void upsertClient(Client client) {
+    public void upsertClient(final Client client) {
         // Check if client with this identifier already exists (e.g., from restart/reconnect)
-        Client existingClient = clientRepository.findByClientIdentifier(client.getClientIdentifier());
+        final Client existingClient = clientRepository.findByClientIdentifier(client.getClientIdentifier());
+        
         if (existingClient != null) {
             // Update existing client instead of creating duplicate
             log.info("Client {} already registered, updating registration", client.getClientIdentifier());
-            existingClient.setClientUrl(client.getClientUrl());
             existingClient.setSubscribedTopics(client.getSubscribedTopics());
             clientRepository.save(existingClient);
         } else {
@@ -49,37 +49,40 @@ public class DbService {
     }
 
     @Transactional(readOnly = true)
-    public List<Client> getClientsByTopic(String topic) {
+    public List<Client> getClientsByTopic(final String topic) {
         return clientRepository.findAll().stream()
                 .filter(client -> client.getSubscribedTopics().contains(topic))
                 .toList();
     }
 
-    public Optional<Client> getClientByIdentifier(String identifier) {
+    public Optional<Client> getClientByIdentifier(final String identifier) {
         return Optional.ofNullable(clientRepository.findByClientIdentifier(identifier));
     }
 
-    public DeliveryStatus createDeliveryStatus(Long externalDataId, Long clientId) {
-        DeliveryStatus status = new DeliveryStatus(externalDataId, clientId);
+    public DeliveryStatus createDeliveryStatus(final Long externalDataId, final Long clientId) {
+        final DeliveryStatus status = new DeliveryStatus(externalDataId, clientId);
         return deliveryStatusRepository.save(status);
     }
 
     @Transactional
-    public boolean markAsConfirmed(Long dataId, String clientIdentifier) {
-        Client client = clientRepository.findByClientIdentifier(clientIdentifier);
+    public boolean markAsConfirmed(final Long dataId, final String clientIdentifier) {
+        final Client client = clientRepository.findByClientIdentifier(clientIdentifier);
+        
         if (client == null) {
+            log.debug("client {} not found", clientIdentifier);
             return false;
         }
+        
         return markAsConfirmedByClientId(dataId, client.getId());
     }
 
     @Transactional
-    public boolean markAsConfirmedByClientId(Long dataId, Long clientId) {
-        Optional<DeliveryStatus> statusOpt = deliveryStatusRepository
-                .findByExternalDataIdAndClientId(dataId, clientId);
+    private boolean markAsConfirmedByClientId(final Long dataId, final Long clientId) {
+        final Optional<DeliveryStatus> statusOpt = deliveryStatusRepository.findByExternalDataIdAndClientId(dataId, clientId);
 
         if (statusOpt.isPresent()) {
             DeliveryStatus status = statusOpt.get();
+            
             status.setConfirmed(true);
             deliveryStatusRepository.save(status);
 
@@ -96,8 +99,8 @@ public class DbService {
         return false;
     }
 
-    public List<DeliveryStatus> getPendingDeliveries(int secondsAgo, int maxAttempts) {
-        LocalDateTime threshold = LocalDateTime.now().minusSeconds(secondsAgo);
+    public List<DeliveryStatus> getPendingDeliveries(final int secondsAgo, final int maxAttempts) {
+        final LocalDateTime threshold = LocalDateTime.now().minusSeconds(secondsAgo);
         return deliveryStatusRepository.findByConfirmedFalseAndLastAttemptBefore(threshold)
                 .stream()
                 .filter(status -> status.getAttemptCount() < maxAttempts)
@@ -117,44 +120,33 @@ public class DbService {
                 .toList();
     }
 
-    public DeliveryStatus updateDeliveryStatus(DeliveryStatus status) {
+    public DeliveryStatus updateDeliveryStatus(final DeliveryStatus status) {
         return deliveryStatusRepository.save(status);
     }
 
-    public Optional<ExternalDataTableEntry> getExternalDataById(Long id) {
+    public Optional<ExternalDataTableEntry> getExternalDataById(final Long id) {
         return externalDataRepository.findById(id);
     }
 
-    public Optional<Client> getClientById(Long id) {
+    public Optional<Client> getClientById(final Long id) {
         return clientRepository.findById(id);
     }
 
     @Transactional
-    public void deleteExternalDataAndStatuses(Long externalDataId) {
+    public void deleteExternalDataAndStatuses(final Long externalDataId) {
         deliveryStatusRepository.deleteByExternalDataId(externalDataId);
         externalDataRepository.deleteById(externalDataId);
     }
 
     @Transactional
-    public void deleteFailedDeliveries(int maxAttempts) {
-        List<DeliveryStatus> failed = deliveryStatusRepository.findAll().stream()
+    public void deleteFailedDeliveries(final int maxAttempts) {
+        // TODO maybe delete only statuses that exceeded and then check for the data without any status (and then delete it to)
+        deliveryStatusRepository
+                .findAll()
+                .stream()
                 .filter(status -> !status.isConfirmed() && status.getAttemptCount() >= maxAttempts)
-                .toList();
-
-        // Group by external data ID and check if we should delete the entire event
-        failed.stream()
                 .map(DeliveryStatus::getExternalDataId)
                 .distinct()
-                .forEach(dataId -> {
-                    long totalClients = deliveryStatusRepository.countByExternalDataId(dataId);
-                    long failedClients = deliveryStatusRepository.findByExternalDataId(dataId).stream()
-                            .filter(s -> !s.isConfirmed() && s.getAttemptCount() >= maxAttempts)
-                            .count();
-
-                    // If all remaining unconfirmed have failed, clean up
-                    if (failedClients > 0) {
-                        deleteExternalDataAndStatuses(dataId);
-                    }
-                });
+                .forEach(this::deleteExternalDataAndStatuses);
     }
 }

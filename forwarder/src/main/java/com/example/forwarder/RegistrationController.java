@@ -19,17 +19,11 @@ public class RegistrationController {
     private static final Logger log = LoggerFactory.getLogger(RegistrationController.class);
 
     @MessageMapping("/register")
-    public void registerClient(@Payload RegistrationRequest registrationRequest, SimpMessageHeaderAccessor headerAccessor) {
-        // Get client IP from session attributes or headers
-        String clientIp = headerAccessor.getFirstNativeHeader("X-Forwarded-For");
-        if (clientIp == null) {
-            clientIp = "ws-client-" + headerAccessor.getSessionId();
-        }
-        log.info("Received registration request from client {} at {}: topics={}",
-                clientIp, registrationRequest.clientUrl(), registrationRequest.topics());
+    public void registerClient(@Payload final RegistrationRequest registrationRequest, SimpMessageHeaderAccessor headerAccessor) {
+        log.info("Received registration request from client {}: topics={}", registrationRequest.clientIdentifier(), registrationRequest.topics());
 
-        dbService.upsertClient(new Client(clientIp, registrationRequest.clientUrl(), registrationRequest.topics()));
+        dbService.upsertClient(new Client(registrationRequest));
 
-        log.info("Client {} registered/updated successfully", clientIp);
+        log.info("Client {} registered/updated successfully", registrationRequest.clientIdentifier());
     }
 }
