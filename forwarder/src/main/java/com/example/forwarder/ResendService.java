@@ -59,6 +59,7 @@ public class ResendService {
             // Update attempt info before sending
             status.setLastAttempt(LocalDateTime.now());
             status.incrementAttemptCount();
+            dbService.updateDeliveryStatus(status);
 
             sendService.sendToClient(client.getClientIdentifier(), data);
         }

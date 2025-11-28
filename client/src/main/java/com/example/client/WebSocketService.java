@@ -67,7 +67,7 @@ public class WebSocketService {
                     // Subscribe to user queue for retries
                     session.subscribe("/user/queue/data", this);
 
-                    final var regRequest = new RegistrationRequest(clientUrl, topics);
+                    final var regRequest = new RegistrationRequest(clientIdentifier, topics);
                     
                     session.send("/app/register", regRequest);
                     log.info("Sent registration for topics: {}", topics);
