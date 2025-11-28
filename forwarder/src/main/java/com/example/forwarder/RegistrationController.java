@@ -22,7 +22,7 @@ public class RegistrationController {
     public void registerClient(@Payload final RegistrationRequest registrationRequest, SimpMessageHeaderAccessor headerAccessor) {
         log.info("Received registration request from client {}: topics={}", registrationRequest.clientIdentifier(), registrationRequest.topics());
 
-        dbService.upsertClient(new Client(registrationRequest));
+        dbService.upsertClient(new Client(registrationRequest, headerAccessor.getSessionId()));
 
         log.info("Client {} registered/updated successfully", registrationRequest.clientIdentifier());
     }

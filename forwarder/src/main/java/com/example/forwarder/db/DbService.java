@@ -36,6 +36,7 @@ public class DbService {
             // Update existing client instead of creating duplicate
             log.info("Client {} already registered, updating registration", client.getClientIdentifier());
             existingClient.setSubscribedTopics(client.getSubscribedTopics());
+            existingClient.setSessionId(client.getSessionId());
             clientRepository.save(existingClient);
         } else {
             // New client, save as is
@@ -148,5 +149,15 @@ public class DbService {
                 .map(DeliveryStatus::getExternalDataId)
                 .distinct()
                 .forEach(this::deleteExternalDataAndStatuses);
+    }
+
+    public void handleClientDisconnect(String sessionId) {
+        Client client = clientRepository.findBySessionId(sessionId);
+        
+        if (client != null) {
+            log.info("Client {} disconnected, clearing session", client.getClientIdentifier());
+            client.setSessionId(null);
+            clientRepository.save(client);
+        }
     }
 }

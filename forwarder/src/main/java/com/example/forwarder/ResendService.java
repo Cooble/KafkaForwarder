@@ -57,6 +57,11 @@ public class ResendService {
             final ExternalDataTableEntry data = dataOpt.get();
             final Client client = clientOpt.get();
 
+            if (client.getSessionId() == null) {
+                log.info("Client {} is disconnected, skipping resend", client.getClientIdentifier());
+                continue;
+            }
+
             log.info("Retrying delivery of data {} to client {} (attempt {}/{})", data.getId(), client.getClientIdentifier(), status.getAttemptCount() + 1, maxAttempts);
 
             // Update attempt info before sending

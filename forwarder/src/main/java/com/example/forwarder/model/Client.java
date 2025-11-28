@@ -22,15 +22,19 @@ public class Client {
     @Column(name = "client_identifier")
     private String clientIdentifier;
 
+    @Column(name = "session_id")
+    private String sessionId;
+
     @ElementCollection(fetch = FetchType.EAGER)
     private List<String> subscribedTopics;
 
     // for Hibernate
     public Client() {}
 
-    public Client(final RegistrationRequest request) {
+    public Client(final RegistrationRequest request, final String sessionId) {
         clientIdentifier = request.clientIdentifier();
         subscribedTopics = request.topics();
+        this.sessionId = sessionId;
     }
 
     public Long getId() {
@@ -55,5 +59,13 @@ public class Client {
 
     public void setSubscribedTopics(List<String> subscribedTopics) {
         this.subscribedTopics = subscribedTopics;
+    }
+
+    public String getSessionId() {
+        return sessionId;
+    }
+
+    public void setSessionId(String sessionId) {
+        this.sessionId = sessionId;
     }
 }

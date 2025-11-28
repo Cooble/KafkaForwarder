@@ -53,6 +53,11 @@ public class KafkaService {
 
         // 4. Send to clients and create delivery status for each one (wait for confirmation)
         for (final Client client : subscribedClients) {
+            if (client.getSessionId() == null) {
+                log.info("Client {} is disconnected, skipping send", client.getClientIdentifier());
+                continue;
+            }
+            
             sendService.sendToClient(client.getClientIdentifier(), externalDataTableEntry);
             dbService.createDeliveryStatus(externalDataTableEntry.getId(), client.getId());
             
