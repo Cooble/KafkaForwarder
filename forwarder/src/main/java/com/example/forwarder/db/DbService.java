@@ -63,6 +63,13 @@ public class DbService {
         DeliveryStatus status = new DeliveryStatus(externalDataId, clientId);
         return deliveryStatusRepository.save(status);
     }
+    public List<DeliveryStatus> createDeliveryStatuses(Long externalDataId, List<Long> clientIds) {
+        return deliveryStatusRepository.saveAll(
+                clientIds.stream()
+                        .map(clientId -> new DeliveryStatus(externalDataId, clientId))
+                        .toList()
+        );
+    }
 
     @Transactional
     public boolean markAsConfirmed(Long dataId, String clientIdentifier) {

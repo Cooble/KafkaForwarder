@@ -56,13 +56,17 @@ public class KafkaService {
         }
 
         // 4. Create delivery status for each client and send
-        for (Client client : subscribedClients) {
-            DeliveryStatus status = dbService.createDeliveryStatus(externalDataTableEntry.getId(), client.getId());
-            log.info("Created delivery status for client {} and data {}",
-                    client.getClientIdentifier(), externalDataTableEntry.getId());
+        var clientIds = subscribedClients.stream()
+                .map(Client::getId)
+                .toList();
+        var stats = dbService.createDeliveryStatuses(externalDataTableEntry.getId(), clientIds);
 
-            // 5. Send to client asynchronously
-            sendToClientAsync(externalDataTableEntry, client, status);
+        // 5. Send to client asynchronously
+        for (int i = 0; i < subscribedClients.size(); i++) {
+            log.info("Created delivery status for client {} with ID {}",
+                    subscribedClients.get(i).getClientIdentifier(),
+                    stats.get(i).getId());
+            sendToClientAsync(externalDataTableEntry, subscribedClients.get(i), stats.get(i));
         }
     }
 
