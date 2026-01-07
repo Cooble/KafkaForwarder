@@ -19,13 +19,13 @@ public class PublishService {
     @Value("${producer.ramp.enabled:true}")
     private boolean rampEnabled;
 
-    @Value("${producer.ramp.start.rate:1}")
+    @Value("${producer.ramp.start.rate:1700}")
     private double startRate;
 
     @Value("${producer.ramp.end.rate:3000}")
     private double endRate;
 
-    @Value("${producer.ramp.duration.seconds:300}")
+    @Value("${producer.ramp.duration.seconds:60}")
     private int rampDurationSeconds;
 
     @Autowired
@@ -58,6 +58,7 @@ public class PublishService {
 
         System.out.println("Starting Poisson spammer with " +
                          (rampEnabled ? "ramp-up" : "constant rate"));
+
 
         // All timing uses NANOS for precision
         long nextTargetTimeNs = System.nanoTime();

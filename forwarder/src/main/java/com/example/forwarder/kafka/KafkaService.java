@@ -228,10 +228,10 @@ public class KafkaService {
         long received = eventsReceived.getAndSet(0);
         long processed = eventsProcessed.getAndSet(0);
         long pending = pendingBatches.get();
-        if (received > 0 || processed > 0 || pending > 0) {
+       // if (received > 0 || processed > 0 || pending > 0) {
             log.info("Kafka: Received {} events/sec, Processed {} events/sec, Pending batches: {}",
                     received, processed, pending);
-        }
+       // }
     }
 
     // Inner classes to hold event data

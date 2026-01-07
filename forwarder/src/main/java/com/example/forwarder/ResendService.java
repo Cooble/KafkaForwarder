@@ -46,19 +46,37 @@ public class ResendService {
 
         log.info("Found {} pending deliveries to retry (ordered by sequence number)", pendingDeliveries.size());
 
+        // Collect all unique IDs for batch fetching (avoid N+1 query problem!)
+        Set<Long> dataIds = new HashSet<>();
+        Set<Long> clientIds = new HashSet<>();
+        
+        for (DeliveryStatus status : pendingDeliveries) {
+            dataIds.add(status.getExternalDataId());
+            clientIds.add(status.getClientId());
+        }
+
+        // Batch fetch all data and clients in TWO queries instead of N queries!
+        Map<Long, ExternalDataTableEntry> dataMap = dbService.getExternalDataByIds(new ArrayList<>(dataIds))
+            .stream()
+            .collect(java.util.stream.Collectors.toMap(ExternalDataTableEntry::getId, d -> d));
+        
+        Map<Long, Client> clientMap = dbService.getClientsByIds(new ArrayList<>(clientIds))
+            .stream()
+            .collect(java.util.stream.Collectors.toMap(Client::getId, c -> c));
+
         // Group pending deliveries by client (same as KafkaService does)
         Map<Long, List<PendingDeliveryItem>> deliveriesByClient = new HashMap<>();
 
         for (DeliveryStatus status : pendingDeliveries) {
-            Optional<ExternalDataTableEntry> dataOpt = dbService.getExternalDataById(status.getExternalDataId());
-            Optional<Client> clientOpt = dbService.getClientById(status.getClientId());
+            ExternalDataTableEntry data = dataMap.get(status.getExternalDataId());
+            Client client = clientMap.get(status.getClientId());
 
-            if (dataOpt.isEmpty() || clientOpt.isEmpty()) {
-                continue; // the y were deleted in the meantime
+            if (data == null || client == null) {
+                // Data or client was deleted in the meantime
+                log.debug("Skipping pending delivery - data or client deleted: dataId={}, clientId={}", 
+                    status.getExternalDataId(), status.getClientId());
+                continue;
             }
-
-            ExternalDataTableEntry data = dataOpt.get();
-            Client client = clientOpt.get();
 
             deliveriesByClient.computeIfAbsent(client.getId(), k -> new ArrayList<>())
                 .add(new PendingDeliveryItem(data, status, client));

@@ -24,10 +24,6 @@ public class DbService {
     @Autowired
     private DeliveryStatusRepository deliveryStatusRepository;
 
-    public ExternalDataTableEntry saveExternalData(ExternalDataTableEntry data) {
-        return externalDataRepository.save(data);
-    }
-
     @Transactional
     public List<ExternalDataTableEntry> saveAllExternalData(List<ExternalDataTableEntry> dataList) {
         return externalDataRepository.saveAll(dataList);
@@ -73,19 +69,6 @@ public class DbService {
         return Optional.ofNullable(clientRepository.findByClientIdentifier(identifier));
     }
 
-    public DeliveryStatus createDeliveryStatus(Long externalDataId, Long clientId) {
-        DeliveryStatus status = new DeliveryStatus(externalDataId, clientId);
-        return deliveryStatusRepository.save(status);
-    }
-
-    public List<DeliveryStatus> createDeliveryStatuses(Long externalDataId, List<Long> clientIds, long bornTimeMs) {
-        return deliveryStatusRepository.saveAll(
-                clientIds.stream()
-                        .map(clientId -> new DeliveryStatus(externalDataId, clientId, bornTimeMs))
-                        .toList()
-        );
-    }
-
     @Transactional
     public List<DeliveryStatus> createDeliveryStatusesBatch(List<KafkaService.DeliveryStatusRequest> requests) {
         List<DeliveryStatus> statuses = requests.stream()
@@ -95,114 +78,87 @@ public class DbService {
         return deliveryStatusRepository.saveAll(statuses);
     }
 
+    /**
+     * Marks delivery statuses as confirmed in batch - FAST version that just marks as confirmed.
+     * Cleanup happens separately via scheduled task, not inline.
+     */
     @Transactional
-    public boolean markAsConfirmed(Long dataId, String clientIdentifier) {
-        Client client = clientRepository.findByClientIdentifier(clientIdentifier);
-        if (client == null) {
-            return false;
-        }
-        return markAsConfirmedByClientId(dataId, client.getId());
-    }
-
-    @Transactional
-    public boolean markAsConfirmedByClientId(Long dataId, Long clientId) {
-        Optional<DeliveryStatus> statusOpt = deliveryStatusRepository
-                .findByExternalDataIdAndClientId(dataId, clientId);
-
-        if (statusOpt.isEmpty()) {
-            // Delivery status doesn't exist - likely already deleted by another thread
-            log.debug("Delivery status for data {} and client {} not found - already processed", dataId, clientId);
-            return false;
+    public int markAsConfirmedBatch(List<com.example.forwarder.DeliveryResultHandler.DeliveryUpdate> updates) {
+        if (updates.isEmpty()) {
+            return 0;
         }
 
-        DeliveryStatus status = statusOpt.get();
+        // Build list of IDs to fetch in ONE query
+        Set<String> uniqueKeys = new HashSet<>();
+        List<Long> dataIds = new ArrayList<>();
+        List<Long> clientIds = new ArrayList<>();
 
-        // Don't mark as confirmed if already confirmed (idempotent)
-        if (status.isConfirmed()) {
-            log.debug("Delivery status {} already confirmed - skipping", status.getId());
-            return true;
-        }
-
-        status.setConfirmed(true);
-        deliveryStatusRepository.save(status);
-
-        // Check if all deliveries are confirmed by fetching actual list (more reliable than counts)
-        List<DeliveryStatus> allStatuses = deliveryStatusRepository.findByExternalDataId(dataId);
-        boolean allConfirmed = allStatuses.stream().allMatch(DeliveryStatus::isConfirmed);
-
-        if (allConfirmed && !allStatuses.isEmpty()) {
-            // All deliveries confirmed - safe to delete data and delivery statuses
-            try {
-                deliveryStatusRepository.deleteByExternalDataId(dataId);
-                externalDataRepository.deleteById(dataId);
-                log.debug("Successfully deleted data {} and all delivery statuses after all confirmations", dataId);
-            } catch (Exception e) {
-                // Ignore deletion errors - likely already deleted by concurrent thread
-                log.debug("Failed to delete data {} - may have been already deleted concurrently: {}", dataId, e.getMessage());
+        for (var update : updates) {
+            String key = update.dataId() + "_" + update.clientId();
+            if (uniqueKeys.add(key)) {
+                dataIds.add(update.dataId());
+                clientIds.add(update.clientId());
             }
         }
-        return true;
+
+        // Fetch only the statuses we need to update in ONE query
+        // Using native query for maximum speed
+        int updated = deliveryStatusRepository.markAsConfirmedBulk(dataIds, clientIds);
+
+        return updated;
     }
 
     public List<DeliveryStatus> getPendingDeliveries() {
-        return deliveryStatusRepository.findByConfirmedFalse()
-                .stream()
-                .sorted((a, b) -> {
-                    Optional<ExternalDataTableEntry> dataA = getExternalDataById(a.getExternalDataId());
-                    Optional<ExternalDataTableEntry> dataB = getExternalDataById(b.getExternalDataId());
-
-                    // Handle missing data - missing data sorts last
-                    if (dataA.isEmpty() && dataB.isEmpty()) return Long.compare(a.getId(), b.getId());
-                    if (dataA.isEmpty()) return 1;  // A missing, sorts after B
-                    if (dataB.isEmpty()) return -1; // B missing, sorts after A
-
-                    Long seqA = dataA.get().getSequenceNumber();
-                    Long seqB = dataB.get().getSequenceNumber();
-
-                    // Handle null sequence numbers - null sorts last
-                    if (seqA == null && seqB == null) return Long.compare(a.getId(), b.getId());
-                    if (seqA == null) return 1;  // A null, sorts after B
-                    if (seqB == null) return -1; // B null, sorts after A
-
-                    // Both present and non-null - compare by sequence number
-                    int seqCompare = seqA.compareTo(seqB);
-                    if (seqCompare != 0) return seqCompare;
-
-                    // Same sequence - use ID as tiebreaker for stable sort
-                    return Long.compare(a.getId(), b.getId());
-                })
-                .toList();
-    }
-
-    public DeliveryStatus updateDeliveryStatus(DeliveryStatus status) {
-        return deliveryStatusRepository.save(status);
+        // Native SQL query already orders by externalDataId and id - no need for Java sorting!
+        return deliveryStatusRepository.findPendingOrderedByDataId();
     }
 
     public Optional<ExternalDataTableEntry> getExternalDataById(Long id) {
         return externalDataRepository.findById(id);
     }
 
+    public List<ExternalDataTableEntry> getExternalDataByIds(List<Long> ids) {
+        return externalDataRepository.findAllById(ids);
+    }
+
     public Optional<Client> getClientById(Long id) {
         return clientRepository.findById(id);
     }
 
-    @Transactional
-    public void deleteExternalDataAndStatuses(Long externalDataId) {
-        deliveryStatusRepository.deleteByExternalDataId(externalDataId);
-        externalDataRepository.deleteById(externalDataId);
+    public List<Client> getClientsByIds(List<Long> ids) {
+        return clientRepository.findAllById(ids);
     }
 
     @Transactional
     public void deleteExternalDataBatch(List<Long> externalDataIds) {
         // Delete all delivery statuses in ONE query instead of multiple
-        deliveryStatusRepository.deleteByExternalDataIdIn(externalDataIds);
+        deliveryStatusRepository.deleteByDataIds(externalDataIds);
         // Delete all external data in one batch
         externalDataRepository.deleteAllById(externalDataIds);
     }
 
+
+    /**
+     * Combined cleanup operation - deletes fully confirmed delivery statuses
+     * and then orphaned external data in a single transaction.
+     * Returns a record with counts of deleted items.
+     */
     @Transactional
-    public void deleteDeliveryStatus(Long deliveryStatusId) {
-        deliveryStatusRepository.deleteById(deliveryStatusId);
+    public CleanupResult cleanupConfirmedDataAndOrphans() {
+        // Step 1: Delete all delivery statuses for fully confirmed external data
+        int deletedStatuses = deliveryStatusRepository.deleteFullyConfirmedDeliveryStatuses();
+
+        // Step 2: Delete external data entries that no longer have any delivery statuses
+        // This automatically cleans up the data from step 1
+        int deletedData = externalDataRepository.deleteOrphanedData();
+
+        return new CleanupResult(deletedStatuses, deletedData);
+    }
+
+    /**
+     * Simple record to hold cleanup results.
+     */
+    public record CleanupResult(int deletedStatuses, int deletedData) {
     }
 }
 

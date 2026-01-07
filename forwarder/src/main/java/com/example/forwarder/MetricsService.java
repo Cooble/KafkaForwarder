@@ -71,6 +71,20 @@ public class MetricsService {
         ackCount.increment();
     }
 
+    // --- BATCH PATH (Called by batch processor) ---
+    // Records multiple acks at once without expensive loop overhead
+    public void recordAckBatch(int count, long currentTimeMs) {
+        // Set first event time on first call
+        if (firstEventTime == -1) {
+            firstEventTime = currentTimeMs;
+        }
+
+        // Just increment the counter by batch size
+        // We skip individual latency recording for batch processing
+        // to avoid the overhead - throughput metrics are still accurate
+        ackCount.add(count);
+    }
+
     // --- COLD PATH (Called once per second) ---
     @Scheduled(fixedRate = 1000)
     public void snapshot() {

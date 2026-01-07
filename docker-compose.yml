@@ -10,6 +10,7 @@ services:
     env_file:
       .env
 
+  # PostgreSQL Database (use with spring.profiles.active=postgres)
   postgres:
     container_name: postgres
     image: postgres:17
@@ -25,5 +26,18 @@ services:
       timeout: 5s
       retries: 5
 
+  # H2 Database (use with spring.profiles.active=h2)
+  h2:
+    container_name: h2
+    image: oscarfonts/h2:latest
+    ports:
+      - "8083:81"    # H2 web console (internal port 81 -> external 8083)
+      - "9093:1521"  # H2 TCP server (internal port 1521 -> external 9093)
+    volumes:
+      - h2_data:/opt/h2-data
+    environment:
+      H2_OPTIONS: "-ifNotExists -tcpAllowOthers -webAllowOthers"
+
 volumes:
   postgres_data:
+  h2_data:
