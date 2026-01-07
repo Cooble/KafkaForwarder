@@ -1,7 +1,6 @@
 package com.example.forwarder.model;
 
 import jakarta.persistence.*;
-import java.time.LocalDateTime;
 
 @Entity
 @Table(
@@ -9,7 +8,7 @@ import java.time.LocalDateTime;
                 @UniqueConstraint(columnNames = {"external_data_id", "client_id"})
         },
         indexes = {
-                @Index(name = "idx_delivery_last_attempt", columnList = "last_attempt, confirmed"),
+                @Index(name = "idx_delivery_confirmed", columnList = "confirmed"),
                 @Index(name = "idx_delivery_external_data", columnList = "external_data_id")
         }
 )
@@ -27,18 +26,21 @@ public class DeliveryStatus {
     @Column(name = "confirmed", nullable = false)
     private boolean confirmed = false;
 
-    @Column(name = "last_attempt")
-    private LocalDateTime lastAttempt;  // For retry timing - functionally necessary
-
-    @Column(name = "attempt_count", nullable = false)
-    private int attemptCount = 0;
+    @Column(name = "born_time_ms", nullable = false)
+    private long bornTimeMs;  // Timestamp when event was received from Kafka (for metrics)
 
     public DeliveryStatus() {}
 
     public DeliveryStatus(Long externalDataId, Long clientId) {
         this.externalDataId = externalDataId;
         this.clientId = clientId;
-        this.lastAttempt = LocalDateTime.now();
+        this.bornTimeMs = System.currentTimeMillis();
+    }
+
+    public DeliveryStatus(Long externalDataId, Long clientId, long bornTimeMs) {
+        this.externalDataId = externalDataId;
+        this.clientId = clientId;
+        this.bornTimeMs = bornTimeMs;
     }
 
     public Long getId() {
@@ -73,24 +75,13 @@ public class DeliveryStatus {
         this.confirmed = confirmed;
     }
 
-    public LocalDateTime getLastAttempt() {
-        return lastAttempt;
+
+    public long getBornTimeMs() {
+        return bornTimeMs;
     }
 
-    public void setLastAttempt(LocalDateTime lastAttempt) {
-        this.lastAttempt = lastAttempt;
-    }
-
-    public int getAttemptCount() {
-        return attemptCount;
-    }
-
-    public void setAttemptCount(int attemptCount) {
-        this.attemptCount = attemptCount;
-    }
-
-    public void incrementAttemptCount() {
-        this.attemptCount++;
+    public void setBornTimeMs(long bornTimeMs) {
+        this.bornTimeMs = bornTimeMs;
     }
 }
 

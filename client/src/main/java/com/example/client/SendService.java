@@ -29,8 +29,6 @@ public class SendService {
     public void sendConfirmation(Long dataId, String clientIp) {
         String identifier = !clientIdentifier.equals("unknown") ? clientIdentifier : clientIp;
 
-        log.info("Sending confirmation for data ID {} to forwarder as client {}", dataId, identifier);
-
         ConfirmationRequest confirmationRequest = new ConfirmationRequest(dataId, identifier);
 
         webClient.post()
@@ -40,7 +38,7 @@ public class SendService {
                 .toBodilessEntity()
                 .timeout(Duration.ofSeconds(5))
                 .subscribe(
-                    response -> log.info("Successfully confirmed data ID {}", dataId),
+                    response -> {},  // Silent success
                     error -> log.error("Failed to send confirmation for data ID {}: {}", dataId, error.getMessage())
                 );
     }

@@ -41,12 +41,13 @@ public class RegistrationService {
     @PostConstruct
     public void registerOnStartup() {
         if (!autoRegister) {
-            log.info("Auto-registration disabled");
+            log.info(" Auto-registration is disabled. Skipping registration with forwarder.");
+
             return;
         }
 
         List<String> topics = Arrays.asList(subscribedTopicsStr.split(","));
-        log.info("Registering client with forwarder at {} for topics: {}", forwarderUrl, topics);
+        log.info("Registering client with forwarder for topics: {}", topics);
 
         RegistrationRequest request = new RegistrationRequest(clientUrl, topics);
 
@@ -67,22 +68,18 @@ public class RegistrationService {
                 return; // Success! Exit the method
 
             } catch (Exception e) {
-                if (attempt >= maxRetryAttempts) {
-                    log.error("Failed to register with forwarder after {} attempts. Giving up. Error: {}",
-                            maxRetryAttempts, e.getMessage());
-                    log.warn("Client will not receive events until manually registered!");
-                } else {
-                    long delay = retryDelayMs * attempt; // Linear backoff
-                    log.warn("Failed to register with forwarder (attempt {}/{}): {}. Retrying in {}ms...",
-                            attempt, maxRetryAttempts, e.getMessage(), delay);
-                    try {
-                        Thread.sleep(delay);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        log.error("Registration retry interrupted");
-                        return;
-                    }
+
+                long delay = retryDelayMs * attempt; // Linear backoff
+                log.warn("Failed to register with forwarder (attempt {}/{}): {}. Retrying in {}ms...",
+                        attempt, maxRetryAttempts, e.getMessage(), delay);
+                try {
+                    Thread.sleep(delay);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    log.error("Registration retry interrupted");
+                    return;
                 }
+
             }
         }
     }

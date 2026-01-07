@@ -9,6 +9,7 @@ public class TransformationService {
 
     public ExternalDataTableEntry transform(InternalData data, String topic, Long sequenceNumber) {
         return new ExternalDataTableEntry(
+                data.eventId(),
                 topic,
                 data.msg(),
                 data.name(),

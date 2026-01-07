@@ -24,12 +24,8 @@ public class RegistrationController {
     @ResponseStatus(HttpStatus.OK)
     public void registerClient(HttpServletRequest request, @RequestBody RegistrationRequest registrationRequest) {
         String clientIp = request.getRemoteAddr();
-        log.info("Received registration request from client {} at {}: topics={}",
-                clientIp, registrationRequest.clientUrl(), registrationRequest.topics());
 
         dbService.upsertClient(new Client(clientIp, registrationRequest.clientUrl(), registrationRequest.topics()));
-
-        log.info("Client {} registered/updated successfully", clientIp);
     }
 
     // TODO: Make an "unregister" method? or maybe screw it, its a demo

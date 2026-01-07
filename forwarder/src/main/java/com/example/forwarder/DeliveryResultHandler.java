@@ -5,13 +5,14 @@ import com.example.forwarder.model.DeliveryStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Handles the result of sending data to clients.
- * Centralizes the logic for marking deliveries as confirmed or updating retry status.
+ * Centralizes the logic for marking deliveries as confirmed.
  */
 @Service
 public class DeliveryResultHandler {
@@ -20,36 +21,46 @@ public class DeliveryResultHandler {
     @Autowired
     private DbService dbService;
 
+    @Autowired
+    private MetricsService metricsService;
+
+    private final AtomicLong acksReceived = new AtomicLong(0);
+    private final AtomicLong failedDeliveries = new AtomicLong(0);
+
     /**
      * Handles successful or failed delivery attempt.
      * On success: marks as confirmed and triggers cleanup.
-     * On failure: updates attempt count and last attempt timestamp.
+     * On failure: leaves as pending for retry.
      */
     public void handleSendResult(SendService.SendResult result, DeliveryStatus status, String clientIdentifier) {
         if (result.success()) {
-            log.info("Client {} confirmed receipt of data {} via HTTP 200",
-                    clientIdentifier, result.dataId());
             // HTTP 200 = confirmed! Mark as confirmed immediately
             dbService.markAsConfirmedByClientId(result.dataId(), result.clientId());
+            metricsService.recordAck(status.getBornTimeMs());
+            acksReceived.incrementAndGet();
         } else {
-            log.warn("Failed to send data {} to client {} (attempt {}/max)",
-                    result.dataId(), clientIdentifier, status.getAttemptCount() + 1);
-            status.setLastAttempt(LocalDateTime.now());
-            status.incrementAttemptCount();
-            dbService.updateDeliveryStatus(status);
+            // Leave as pending - ResendService will retry later
+            failedDeliveries.incrementAndGet();
         }
     }
 
     /**
      * Handles exception during send attempt.
-     * Updates attempt count and last attempt timestamp.
+     * Leaves delivery as pending for retry.
      */
     public void handleSendException(Long dataId, String clientIdentifier, DeliveryStatus status, Throwable ex) {
-        log.error("Exception sending data {} to client {}: {}",
-                dataId, clientIdentifier, ex.getMessage());
-        status.setLastAttempt(LocalDateTime.now());
-        status.incrementAttemptCount();
-        dbService.updateDeliveryStatus(status);
+        log.debug("Exception sending data {} to client {}: {}", dataId, clientIdentifier, ex.getMessage());
+        // Leave as pending - ResendService will retry later
+        failedDeliveries.incrementAndGet();
+    }
+
+    @Scheduled(fixedRate = 1000)
+    public void logStats() {
+        long acks = acksReceived.getAndSet(0);
+        long fails = failedDeliveries.getAndSet(0);
+        if (acks > 0 || fails > 0) {
+            log.info("Delivery: {} ACKs/sec, {} failed/sec", acks, fails);
+        }
     }
 }
 

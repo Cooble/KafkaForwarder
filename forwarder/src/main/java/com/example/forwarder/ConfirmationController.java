@@ -20,14 +20,9 @@ public class ConfirmationController {
 
     @PostMapping("/confirm")
     public ResponseEntity<Map<String, String>> confirmDelivery(@RequestBody ConfirmationRequest request) {
-        log.info("Received confirmation for data ID {} from client {}",
-                request.dataId(), request.clientIdentifier());
-
         boolean success = dbService.markAsConfirmed(request.dataId(), request.clientIdentifier());
 
         if (success) {
-            log.info("Successfully confirmed delivery of data {} to client {}",
-                    request.dataId(), request.clientIdentifier());
             return ResponseEntity.ok(Map.of("status", "confirmed"));
         } else {
             log.warn("Failed to confirm delivery - data or client not found: data={}, client={}",

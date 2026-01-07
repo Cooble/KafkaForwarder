@@ -4,19 +4,29 @@ import jakarta.persistence.*;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(indexes = {
+@Table(
+    name = "external_data_table_entry",
+    indexes = {
         @Index(name = "idx_external_data_sequence", columnList = "sequence_number"),
-        @Index(name = "idx_external_data_topic", columnList = "topic")
-})
+        @Index(name = "idx_external_data_topic", columnList = "topic"),
+        @Index(name = "idx_external_data_event_id", columnList = "event_id")
+    },
+    uniqueConstraints = {
+        @UniqueConstraint(name = "uk_event_id", columnNames = "event_id")
+    }
+)
 public class ExternalDataTableEntry {
     @Id
     @GeneratedValue(strategy = GenerationType.AUTO)
     private Long id;
 
+    @Column(name = "event_id", unique = true, nullable = false, length = 100)
+    private String eventId;  // Unique event identifier from Kafka message
+
     @Column(name = "topic")
     private String topic;
 
-    @Column(name = "msg")
+    @Column(name = "msg", length = 4096)
     private String msg;
 
     @Column(name = "name")
@@ -35,7 +45,8 @@ public class ExternalDataTableEntry {
         this.receivedAt = LocalDateTime.now();
     }
 
-    public ExternalDataTableEntry(String topic, String msg, String name, String externalNew, Long sequenceNumber) {
+    public ExternalDataTableEntry(String eventId, String topic, String msg, String name, String externalNew, Long sequenceNumber) {
+        this.eventId = eventId;
         this.topic = topic;
         this.msg = msg;
         this.name = name;
@@ -50,6 +61,14 @@ public class ExternalDataTableEntry {
 
     public void setId(Long id) {
         this.id = id;
+    }
+
+    public String getEventId() {
+        return eventId;
+    }
+
+    public void setEventId(String eventId) {
+        this.eventId = eventId;
     }
 
     public String getTopic() {
