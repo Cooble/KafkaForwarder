@@ -37,6 +37,12 @@ public class WebSocketService {
     @Value("${client.identifier:unknown}")
     private String clientIdentifier;
 
+    @Value("${client.processing.delay.ms:0}")
+    private long processingDelayMs;
+
+    @Value("${client.processing.delay.jitter.ms:0}")
+    private long processingDelayJitterMs;
+
     private WebSocketStompClient stompClient;
     private StompSession stompSession;
 
@@ -82,8 +88,20 @@ public class WebSocketService {
                                 data.externalNew()
                         );
 
-                        log.info("Processing data: {}", data.name());
-                        // TODO add delay and eventual message dropping for simulation
+                        if (processingDelayMs > 0 || processingDelayJitterMs > 0) {
+                            long delay = processingDelayMs;
+
+                            if (processingDelayJitterMs > 0) {
+                                delay += java.util.concurrent.ThreadLocalRandom.current().nextLong(0, processingDelayJitterMs + 1);
+                            }
+
+                            try {
+                                Thread.sleep(delay);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                log.warn("Processing delay interrupted", e);
+                            }
+                        }
 
                         final var confirmRequest = new ConfirmationRequest(data.id(), clientIdentifier);
                         

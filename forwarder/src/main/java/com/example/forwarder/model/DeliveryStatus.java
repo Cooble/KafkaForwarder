@@ -27,6 +27,9 @@ public class DeliveryStatus {
     @Column(name = "confirmed", nullable = false)
     private boolean confirmed = false;
 
+    @Column(name = "confirmed_at")
+    private LocalDateTime confirmedAt;
+
     @Column(name = "last_attempt")
     private LocalDateTime lastAttempt;  // For retry timing - functionally necessary
 
@@ -71,6 +74,14 @@ public class DeliveryStatus {
 
     public void setConfirmed(boolean confirmed) {
         this.confirmed = confirmed;
+    }
+
+    public LocalDateTime getConfirmedAt() {
+        return confirmedAt;
+    }
+
+    public void setConfirmedAt(LocalDateTime confirmedAt) {
+        this.confirmedAt = confirmedAt;
     }
 
     public LocalDateTime getLastAttempt() {

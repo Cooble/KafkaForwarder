@@ -6,6 +6,7 @@ import com.example.forwarder.model.ExternalDataTableEntry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,6 +24,9 @@ public class DbService {
     private ClientRepository clientRepository;
     @Autowired
     private DeliveryStatusRepository deliveryStatusRepository;
+
+    @Value("${forwarder.cleanup.enabled:true}")
+    private boolean cleanupEnabled;
 
     public ExternalDataTableEntry saveExternalData(ExternalDataTableEntry data) {
         return externalDataRepository.save(data);
@@ -85,13 +89,14 @@ public class DbService {
             DeliveryStatus status = statusOpt.get();
             
             status.setConfirmed(true);
+            status.setConfirmedAt(LocalDateTime.now());
             deliveryStatusRepository.save(status);
 
             // Check if all clients have confirmed
             long totalClients = deliveryStatusRepository.countByExternalDataId(dataId);
             long confirmedClients = deliveryStatusRepository.countByExternalDataIdAndConfirmedTrue(dataId);
 
-            if (totalClients == confirmedClients) {
+            if (cleanupEnabled && totalClients == confirmedClients) {
                 // All clients confirmed, clean up
                 deleteExternalDataAndStatuses(dataId);
             }
