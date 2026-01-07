@@ -10,9 +10,11 @@ public class TransformationService {
     public ExternalDataTableEntry transform(InternalData data, String topic, Long sequenceNumber) {
         return new ExternalDataTableEntry(
                 topic,
-                data.msg(),
-                data.name(),
-                "externalNewValue",
+                data.documentId(),
+                data.customerId(),
+                data.currency(),
+                data.totalCents(),
+                data.payloadJson(),
                 sequenceNumber
         );
     }

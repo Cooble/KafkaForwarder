@@ -115,11 +115,13 @@ public class WebSocketService {
 
     private void processData(final ExternalData data) {
         log.info(
-                "Received data: id={}, msg={}, name={}, externalNew={}",
-                data.id(),
-                data.msg(),
-                data.name(),
-                data.externalNew()
+            "Received doc: id={}, docId={}, customer={}, currency={}, totalCents={}, payloadSize={}B",
+            data.id(),
+            data.documentId(),
+            data.customerId(),
+            data.currency(),
+            data.totalCents(),
+            data.payloadJson() != null ? data.payloadJson().length() : 0
         );
 
         if (processingDelayMs > 0 || processingDelayJitterMs > 0) {

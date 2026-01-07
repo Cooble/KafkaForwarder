@@ -22,9 +22,11 @@ public class SendService {
 
         final var payload = new ExternalData(
             data.getId(),
-            data.getMsg(),
-            data.getName(),
-            data.getExternalNew()
+            data.getDocumentId(),
+            data.getCustomerId(),
+            data.getCurrency(),
+            data.getTotalCents(),
+            data.getPayloadJson()
         );
 
         messagingTemplate.convertAndSend("/queue/data/" + clientId, payload);
