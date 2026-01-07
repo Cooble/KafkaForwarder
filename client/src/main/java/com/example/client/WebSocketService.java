@@ -4,6 +4,7 @@ import com.example.common.ConfirmationRequest;
 import com.example.common.ExternalData;
 import com.example.common.RegistrationRequest;
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,6 +24,8 @@ import java.lang.reflect.Type;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @Service
 public class WebSocketService {
@@ -43,11 +46,17 @@ public class WebSocketService {
     @Value("${client.processing.delay.jitter.ms:0}")
     private long processingDelayJitterMs;
 
+    @Value("${client.processing.threads:4}")
+    private int processingThreads;
+
     private WebSocketStompClient stompClient;
     private StompSession stompSession;
+    private ExecutorService processingExecutor;
 
     @PostConstruct
     public void connect() {
+        processingExecutor = Executors.newCachedThreadPool();
+
         List<Transport> transports = Arrays.asList(new WebSocketTransport(new StandardWebSocketClient()));
         SockJsClient sockJsClient = new SockJsClient(transports);
 
@@ -80,33 +89,7 @@ public class WebSocketService {
                 @Override
                 public void handleFrame(final StompHeaders headers, final Object payload) {
                     if (payload instanceof ExternalData data) {
-                        log.info(
-                                "Received data: id={}, msg={}, name={}, externalNew={}",
-                                data.id(),
-                                data.msg(),
-                                data.name(),
-                                data.externalNew()
-                        );
-
-                        if (processingDelayMs > 0 || processingDelayJitterMs > 0) {
-                            long delay = processingDelayMs;
-
-                            if (processingDelayJitterMs > 0) {
-                                delay += java.util.concurrent.ThreadLocalRandom.current().nextLong(0, processingDelayJitterMs + 1);
-                            }
-
-                            try {
-                                Thread.sleep(delay);
-                            } catch (InterruptedException e) {
-                                Thread.currentThread().interrupt();
-                                log.warn("Processing delay interrupted", e);
-                            }
-                        }
-
-                        final var confirmRequest = new ConfirmationRequest(data.id(), clientIdentifier);
-                        
-                        stompSession.send("/app/confirm", confirmRequest);
-                        log.info("Sent confirmation for data ID {}", data.id());
+                        processingExecutor.submit(() -> processData(data));
                     }
                 }
 
@@ -127,6 +110,43 @@ public class WebSocketService {
             }).get();
         } catch (InterruptedException | ExecutionException e) {
             log.error("Failed to connect to WebSocket", e);
+        }
+    }
+
+    private void processData(final ExternalData data) {
+        log.info(
+                "Received data: id={}, msg={}, name={}, externalNew={}",
+                data.id(),
+                data.msg(),
+                data.name(),
+                data.externalNew()
+        );
+
+        if (processingDelayMs > 0 || processingDelayJitterMs > 0) {
+            long delay = processingDelayMs;
+
+            if (processingDelayJitterMs > 0) {
+                delay += java.util.concurrent.ThreadLocalRandom.current().nextLong(0, processingDelayJitterMs + 1);
+            }
+
+            try {
+                Thread.sleep(delay);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.warn("Processing delay interrupted", e);
+            }
+        }
+
+        final var confirmRequest = new ConfirmationRequest(data.id(), clientIdentifier);
+
+        stompSession.send("/app/confirm", confirmRequest);
+        log.info("Sent confirmation for data ID {}", data.id());
+    }
+
+    @PreDestroy
+    public void shutdownExecutor() {
+        if (processingExecutor != null) {
+            processingExecutor.shutdown();
         }
     }
 }
