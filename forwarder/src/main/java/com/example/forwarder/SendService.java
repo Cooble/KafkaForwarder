@@ -5,6 +5,7 @@ import com.example.forwarder.model.Client;
 import com.example.forwarder.model.ExternalDataTableEntry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -28,6 +29,9 @@ public class SendService implements MessageSender {
 
     @Value("${forwarder.client.max.concurrent.requests:500}")
     private int maxConcurrentRequests;
+
+    @Autowired
+    private TransformationService transformationService;
 
     private final WebClient webClient;
 
@@ -62,11 +66,7 @@ public class SendService implements MessageSender {
 
     public CompletableFuture<SendResult> sendToClient(ExternalDataTableEntry data, Client client) {
         // Create payload - just send the data, no need for ID wrapper
-        ExternalData payload = new ExternalData(
-            data.getMsg(),
-            data.getName(),
-            data.getExternalNew()
-        );
+        ExternalData payload = transformationService.transform(data);
 
         return webClient.post()
                 .uri(client.getClientUrl() + "/data")
@@ -102,7 +102,7 @@ public class SendService implements MessageSender {
 
         // Create payload - convert all data entries to ExternalData
         List<ExternalData> payload = dataList.stream()
-                .map(data -> new ExternalData(data.getMsg(), data.getName(), data.getExternalNew()))
+                .map(data -> transformationService.transform(data))
                 .toList();
 
         return webClient.post()
