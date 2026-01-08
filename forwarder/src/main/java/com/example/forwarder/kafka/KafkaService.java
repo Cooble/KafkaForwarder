@@ -78,6 +78,8 @@ public class KafkaService {
             return;
         }
 
+        // Track how many events we received from Kafka (not batches, but actual event count)
+        metricsService.recordKafkaReceived(records.size());
 
         // Process asynchronously - don't block Kafka consumer thread
         pendingBatches.incrementAndGet();

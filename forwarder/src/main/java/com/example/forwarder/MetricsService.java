@@ -1,7 +1,9 @@
 package com.example.forwarder;
 
+import com.example.forwarder.db.DeliveryStatusRepository;
 import org.HdrHistogram.Recorder;
 import org.HdrHistogram.Histogram;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -16,10 +18,13 @@ public class MetricsService {
     // === ACTUAL MEASURED METRICS (Real data from the system) ===
     // LongAdder is much faster than AtomicLong under high contention
     // It keeps separate counters per thread and sums them only when asked.
+    private final LongAdder actualKafkaReceivedThisSecond = new LongAdder();  // Events received from Kafka
+    private final LongAdder actualKafkaReceivedTotal = new LongAdder();       // Total events from Kafka
     private final LongAdder actualAcksThisSecond = new LongAdder();
     private final LongAdder actualAcksTotal = new LongAdder();
     private final LongAdder actualSendAttemptsThisSecond = new LongAdder();
     private final LongAdder actualFailuresThisSecond = new LongAdder();
+    private final LongAdder actualFailuresTotal = new LongAdder();  // FIX: Cumulative failures (never resets)
 
     // The "Recorder" handles the concurrency and buffering for us.
     // It is designed specifically for high-throughput recording.
@@ -31,6 +36,9 @@ public class MetricsService {
 
     private PrintWriter csvWriter;
     private String transportMode;
+
+    @Autowired
+    private DeliveryStatusRepository deliveryStatusRepository;
 
     // === SYNTHETIC/EXPECTED VALUES (Theoretical calculations based on producer config) ===
     // These are used to calculate what the producer SHOULD be emitting
@@ -77,7 +85,7 @@ public class MetricsService {
             csvWriter.println("#");
 
             // Clean CSV header with only time-series data (no constant columns)
-            csvWriter.println("TimeSeconds,Expected_EmissionRate,Actual_Acks,Actual_SendAttempts,Actual_Failures,Actual_CumulativeAcks,Expected_CumulativeSent,Actual_CumulativeFailures,Actual_SuccessRate_%,Actual_MeanLatency_ms,Actual_P50_ms,Actual_P95_ms,Actual_P99_ms,Actual_P999_ms,Actual_Max_ms");
+            csvWriter.println("TimeSeconds,Expected_EmissionRate,Actual_KafkaReceived,Actual_Acks,Actual_SendAttempts,Actual_Failures,Actual_CumulativeKafkaReceived,Actual_CumulativeAcks,Expected_CumulativeSent,Actual_CumulativeFailures,Actual_PendingDeliveries,Actual_Lag_Behind,Actual_SuccessRate_%,Actual_MeanLatency_ms,Actual_P50_ms,Actual_P95_ms,Actual_P99_ms,Actual_P999_ms,Actual_Max_ms");
             csvWriter.flush();
 
             // Print configuration to console
@@ -130,6 +138,11 @@ public class MetricsService {
         actualAcksThisSecond.add(count);
     }
 
+    // --- KAFKA TRACKING (Called by KafkaService when events arrive) ---
+    public void recordKafkaReceived(int eventCount) {
+        actualKafkaReceivedThisSecond.add(eventCount);
+    }
+
     // --- SEND TRACKING (Called by SendService/WebSocketSendService) ---
     public void recordSendAttempt(int count) {
         actualSendAttemptsThisSecond.add(count);
@@ -153,11 +166,14 @@ public class MetricsService {
         intervalHistogram = actualLatencyRecorder.getIntervalHistogram(intervalHistogram);
 
         // 2. Get ACTUAL counts for this second and reset the adders
+        long actualKafkaReceived = actualKafkaReceivedThisSecond.sumThenReset();
         long actualAcks = actualAcksThisSecond.sumThenReset();
         long actualSendAttempts = actualSendAttemptsThisSecond.sumThenReset();
         long actualFailures = actualFailuresThisSecond.sumThenReset();
 
+        actualKafkaReceivedTotal.add(actualKafkaReceived);
         actualAcksTotal.add(actualAcks);
+        actualFailuresTotal.add(actualFailures);  // FIX: Accumulate failures properly
 
         // Time elapsed since first event (in seconds)
         long elapsedMs = System.currentTimeMillis() - firstEventTime;
@@ -210,8 +226,15 @@ public class MetricsService {
         long actualMaxLatency = intervalHistogram.getMaxValue();
 
         // Get ACTUAL cumulative counts
+        long actualCumulativeKafkaReceived = actualKafkaReceivedTotal.sum();
         long actualCumulativeAcks = actualAcksTotal.sum();
-        long actualCumulativeFailures = actualFailuresThisSecond.sum();
+        long actualCumulativeFailures = actualFailuresTotal.sum();  // FIX: Use the proper cumulative counter
+
+        // Query DB for pending deliveries count (how healthy we are)
+        long actualPendingDeliveries = deliveryStatusRepository.countPending();
+
+        // Calculate lag: how far behind expected are we?
+        long actualLagBehind = syntheticCumulativeSent - actualCumulativeAcks;
 
         // Calculate ACTUAL success rate
         double actualSuccessRate = actualSendAttempts > 0
@@ -219,28 +242,32 @@ public class MetricsService {
             : 100.0;
 
         // 4. Write CSV with time-series data only (constants are in header comments)
-        csvWriter.printf("%d,%.2f,%d,%d,%d,%d,%d,%d,%.2f,%.2f,%d,%d,%d,%d,%d%n",
-                elapsedSeconds,              // TimeSeconds
-                syntheticEmissionRate,        // Expected emission rate (calculated from config)
-                actualAcks,                   // ACTUAL: Measured ACKs this second
-                actualSendAttempts,           // ACTUAL: Measured send attempts this second
-                actualFailures,               // ACTUAL: Measured failures this second
-                actualCumulativeAcks,         // ACTUAL: Total ACKs received
-                syntheticCumulativeSent,      // Expected total sent (calculated from config)
-                actualCumulativeFailures,     // ACTUAL: Total failures
-                actualSuccessRate,            // ACTUAL: Success rate percentage
-                actualMeanLatency,            // ACTUAL: Mean latency in ms
-                actualP50Latency,             // ACTUAL: P50 latency
-                actualP95Latency,             // ACTUAL: P95 latency
-                actualP99Latency,             // ACTUAL: P99 latency
-                actualP999Latency,            // ACTUAL: P99.9 latency
-                actualMaxLatency);            // ACTUAL: Max latency this second
+        csvWriter.printf("%d,%.2f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.2f,%.2f,%d,%d,%d,%d,%d%n",
+                elapsedSeconds,                 // TimeSeconds
+                syntheticEmissionRate,          // Expected emission rate (calculated from config)
+                actualKafkaReceived,            // ACTUAL: Events received from Kafka this second
+                actualAcks,                     // ACTUAL: Measured ACKs this second
+                actualSendAttempts,             // ACTUAL: Measured send attempts this second
+                actualFailures,                 // ACTUAL: Measured failures this second
+                actualCumulativeKafkaReceived,  // ACTUAL: Total events received from Kafka
+                actualCumulativeAcks,           // ACTUAL: Total ACKs received
+                syntheticCumulativeSent,        // Expected total sent (calculated from config)
+                actualCumulativeFailures,       // ACTUAL: Total failures (FIXED)
+                actualPendingDeliveries,        // ACTUAL: Pending deliveries in DB (health indicator)
+                actualLagBehind,                // ACTUAL: How many messages behind expected
+                actualSuccessRate,              // ACTUAL: Success rate percentage
+                actualMeanLatency,              // ACTUAL: Mean latency in ms
+                actualP50Latency,               // ACTUAL: P50 latency
+                actualP95Latency,               // ACTUAL: P95 latency
+                actualP99Latency,               // ACTUAL: P99 latency
+                actualP999Latency,              // ACTUAL: P99.9 latency
+                actualMaxLatency);              // ACTUAL: Max latency this second
         csvWriter.flush();
 
         if (actualAcks > 0 || actualSendAttempts > 0) {
-            System.out.printf("[%s] ACTUAL: %d acks/sec (%d sent, %d failed, %.1f%% success) | Total: %d acks vs %d expected | P99: %dms | Expected emission: %.2f/sec%n",
+            System.out.printf("[%s] ACTUAL: %d acks/sec (%d sent, %d failed, %.1f%% success) | Total: %d acks vs %d expected (lag: %d) | Pending: %d | P99: %dms | Kafka: %d/sec%n",
                     transportMode, actualAcks, actualSendAttempts, actualFailures, actualSuccessRate,
-                    actualCumulativeAcks, syntheticCumulativeSent, actualP99Latency, syntheticEmissionRate);
+                    actualCumulativeAcks, syntheticCumulativeSent, actualLagBehind, actualPendingDeliveries, actualP99Latency, actualKafkaReceived);
         }
     }
 }
