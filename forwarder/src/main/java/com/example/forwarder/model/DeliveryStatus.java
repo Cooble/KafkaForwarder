@@ -26,7 +26,7 @@ public class DeliveryStatus {
     private boolean confirmed = false;
 
     @Column(name = "born_time_ms", nullable = false)
-    private long bornTimeMs;  // Timestamp when event was received from Kafka (for metrics)
+    private long bornTimeMs;  // Timestamp set by producer when the event was created (for metrics)
 
     public DeliveryStatus() {}
 

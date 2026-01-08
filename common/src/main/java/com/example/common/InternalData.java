@@ -6,5 +6,6 @@ public record InternalData(
 	String customerId,
 	String currency,
 	long totalCents,
-	String payloadJson
+	String payloadJson,
+	long bornTimeMs
 ) {}

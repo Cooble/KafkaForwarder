@@ -54,13 +54,16 @@ public class EventFactory {
                 notes
         );
 
+                long bornTimeMs = System.currentTimeMillis();
+
         return new InternalData(
                 eventId,
                 documentId,
                 customerId,
                 currency,
                 totalCents,
-                payloadJson
+                  payloadJson,
+                  bornTimeMs
         );
     }
 }

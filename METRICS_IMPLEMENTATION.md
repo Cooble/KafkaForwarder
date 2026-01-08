@@ -8,16 +8,16 @@ This implementation measures the **end-to-end latency** from when the forwarder 
 ### 1. Birth Timestamp Tracking in DeliveryStatus
 Added a `bornTimeMs` field to the `DeliveryStatus` entity:
 - **Type**: `long` (milliseconds since epoch)
-- **Purpose**: Records when the Kafka event was received by the forwarder
-- **Set at**: The moment the `KafkaListener` receives the event from Kafka
+- **Purpose**: Records when the producer created the event (carried in the Kafka message)
+- **Set at**: The producer attaches `bornTimeMs` to `InternalData` before publishing
 
 ### 2. Flow of Timestamp Through the System
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│ 1. Kafka Event Arrives                                              │
-│    KafkaService.listenInternalData()                                │
-│    └─> bornTimeMs = System.currentTimeMillis()                      │
+│ 1. Producer Publishes                                               │
+│    PublishService (producer)                                        │
+│    └─> bornTimeMs = System.currentTimeMillis() on event creation    │
 └─────────────────────────────────────────────────────────────────────┘
                                 ↓
 ┌─────────────────────────────────────────────────────────────────────┐

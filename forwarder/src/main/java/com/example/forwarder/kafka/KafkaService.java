@@ -99,12 +99,14 @@ public class KafkaService {
             List<EventRecord> eventRecords = new ArrayList<>();
 
             for (ConsumerRecord<String, InternalData> record : records) {
-                long bornTimeMs = System.currentTimeMillis();
+                InternalData message = record.value();
+                long bornTimeMs = message.bornTimeMs() > 0 ? message.bornTimeMs() : System.currentTimeMillis();
+
                 ExternalDataTableEntry entry = transformationService.transform(
-                    record.value(), record.topic(), record.offset()
+                    message, record.topic(), record.offset()
                 );
                 externalDataList.add(entry);
-                eventRecords.add(new EventRecord(record.value(), record.topic(), record.offset(), bornTimeMs));
+                eventRecords.add(new EventRecord(message, record.topic(), record.offset(), bornTimeMs));
             }
 
             // 2. SINGLE DB CALL: Batch save all external data
