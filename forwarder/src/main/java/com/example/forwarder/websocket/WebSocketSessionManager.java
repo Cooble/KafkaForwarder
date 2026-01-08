@@ -1,11 +1,11 @@
 package com.example.forwarder.websocket;
 
 import com.example.common.AckMessage;
+import com.example.forwarder.DeliveryResultHandler;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.WebSocketSession;
 
@@ -24,15 +24,16 @@ public class WebSocketSessionManager {
     @Autowired
     private ObjectMapper objectMapper;
 
-    @Value("${forwarder.websocket.ack.timeout.ms:10000}")
-    private long ackTimeoutMs;
+    @Autowired
+    private DeliveryResultHandler deliveryResultHandler;
 
     private final Map<Long, WebSocketSessionSender> senders = new ConcurrentHashMap<>();
+    private final Map<Long, String> clientIdentifiers = new ConcurrentHashMap<>();
 
     public void addSession(Long clientId, String clientIdentifier, WebSocketSession session) {
         // Create dedicated sender thread for this session
         WebSocketSessionSender sender = new WebSocketSessionSender(
-            clientId, clientIdentifier, session, objectMapper, ackTimeoutMs
+            clientId, clientIdentifier, session, objectMapper
         );
 
         // Remove old sender if exists (reconnect case)
@@ -42,12 +43,16 @@ public class WebSocketSessionManager {
             oldSender.shutdown();
         }
 
+        // Store client identifier for ACK handling
+        clientIdentifiers.put(clientId, clientIdentifier);
+
         log.info("WebSocket session added for client {} ({}) with dedicated sender thread",
                 clientId, clientIdentifier);
     }
 
     public void removeSession(Long clientId) {
         WebSocketSessionSender removed = senders.remove(clientId);
+        clientIdentifiers.remove(clientId);
         if (removed != null) {
             removed.shutdown();
             log.info("WebSocket session removed for client {}", clientId);
@@ -67,9 +72,17 @@ public class WebSocketSessionManager {
     }
 
     public void handleAck(Long clientId, AckMessage ackMessage) {
-        WebSocketSessionSender sender = senders.get(clientId);
-        if (sender != null) {
-            sender.handleAck(ackMessage);
+        // Update DB directly - mark deliveries as confirmed
+        // This is the key change: ACKs update the DB, ResendService handles retries
+        String clientIdentifier = clientIdentifiers.get(clientId);
+        if (clientIdentifier == null) {
+            log.warn("Received ACK for unknown client {}", clientId);
+            return;
+        }
+
+        // Queue each data ID for DB update via DeliveryResultHandler
+        for (Long dataId : ackMessage.dataIds()) {
+            deliveryResultHandler.handleWebSocketAck(dataId, clientId);
         }
     }
 

@@ -137,7 +137,6 @@ public class KafkaService {
             // Delete data with no subscribers (if any) - async, don't block
             if (!dataIdsToDelete.isEmpty()) {
                 CompletableFuture.runAsync(() -> {
-                    //log.warn("Deleting {} events with no subscribers", dataIdsToDelete.size());
                     dbService.deleteExternalDataBatch(dataIdsToDelete);
                 }, dbExecutor);
             }

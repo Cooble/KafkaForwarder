@@ -78,6 +78,26 @@ public class DeliveryResultHandler {
     }
 
     /**
+     * Handles WebSocket ACK - queues update for async DB processing.
+     * Called when client sends ACK via WebSocket.
+     * Uses born time of 0 since we don't track it for WebSocket ACKs.
+     */
+    public void handleWebSocketAck(Long dataId, Long clientId) {
+        // Check soft limit before adding (prevents unbounded growth)
+        long currentSize = queueSize.get();
+        if (currentSize > MAX_QUEUE_SIZE) {
+            droppedUpdates.incrementAndGet();
+            log.error("Update queue overflow! Size={}, Dropped WebSocket ACK for data {} client {}",
+                currentSize, dataId, clientId);
+            return;
+        }
+
+        // Lock-free add - no contention between WebSocket receive threads
+        updateQueue.add(new DeliveryUpdate(dataId, clientId, 0, true));
+        queueSize.incrementAndGet();
+    }
+
+    /**
      * Handles exception during send attempt.
      * Leaves delivery as pending for retry.
      */

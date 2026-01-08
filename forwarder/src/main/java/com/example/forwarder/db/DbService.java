@@ -7,9 +7,12 @@ import com.example.forwarder.model.ExternalDataTableEntry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.sql.PreparedStatement;
+import java.sql.Timestamp;
 import java.util.*;
 
 
@@ -23,10 +26,44 @@ public class DbService {
     private ClientRepository clientRepository;
     @Autowired
     private DeliveryStatusRepository deliveryStatusRepository;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
+    /**
+     * Saves external data using native JDBC batch MERGE - truly idempotent, single DB operation.
+     * Uses JDBC batch to execute all MERGEs in one round trip.
+     */
     @Transactional
     public List<ExternalDataTableEntry> saveAllExternalData(List<ExternalDataTableEntry> dataList) {
-        return externalDataRepository.saveAll(dataList);
+        if (dataList.isEmpty()) {
+            return List.of();
+        }
+
+        // Execute batch MERGE - all statements in ONE database round trip
+        String sql = """
+            MERGE INTO external_data_table_entry (event_id, topic, document_id, customer_id, currency, total_cents, payload_json, sequence_number, received_at)
+            KEY(event_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """;
+
+        jdbcTemplate.batchUpdate(sql, dataList, dataList.size(), (PreparedStatement ps, ExternalDataTableEntry data) -> {
+            ps.setString(1, data.getEventId());
+            ps.setString(2, data.getTopic());
+            ps.setString(3, data.getDocumentId());
+            ps.setString(4, data.getCustomerId());
+            ps.setString(5, data.getCurrency());
+            ps.setLong(6, data.getTotalCents());
+            ps.setString(7, data.getPayloadJson());
+            ps.setLong(8, data.getSequenceNumber());
+            ps.setTimestamp(9, Timestamp.valueOf(data.getReceivedAt()));
+        });
+
+        // Fetch all records by eventId to get their generated IDs
+        List<String> eventIds = dataList.stream()
+                .map(ExternalDataTableEntry::getEventId)
+                .toList();
+
+        return externalDataRepository.findByEventIdIn(eventIds);
     }
 
     public Client upsertClient(Client client) {
