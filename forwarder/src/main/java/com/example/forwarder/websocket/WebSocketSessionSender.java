@@ -73,9 +73,11 @@ public class WebSocketSessionSender implements Runnable {
             return CompletableFuture.completedFuture(false);
         }
 
+
         List<Long> dataIds = dataList.stream().map(ExternalDataTableEntry::getId).toList();
         List<ExternalData> externalDataList = dataList.stream()
-                .map(data -> new ExternalData(data.getMsg(), data.getName(), data.getExternalNew()))
+                .map(data -> new ExternalData( data.getDocumentId(), data.getCustomerId(),
+                        data.getCurrency(), data.getTotalCents(), data.getPayloadJson()))
                 .toList();
 
         DataMessage payload = new DataMessage(dataIds, externalDataList);
