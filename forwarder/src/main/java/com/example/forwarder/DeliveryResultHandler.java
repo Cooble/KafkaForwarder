@@ -26,6 +26,9 @@ public class DeliveryResultHandler {
     @Autowired
     private DbService dbService;
 
+    @Autowired
+    private MetricsService metricsService;
+
 
     // Lock-free queue to decouple HTTP callbacks from DB updates
     private final ConcurrentLinkedQueue<DeliveryUpdate> updateQueue = new ConcurrentLinkedQueue<>();
@@ -148,6 +151,14 @@ public class DeliveryResultHandler {
             try {
                 // This DB call now runs in background thread pool
                 int processed = dbService.markAsConfirmedBatch(toProcess);
+
+                // Record metrics for each ACK - track time from Kafka arrival to ACK
+                for (DeliveryUpdate deliveryUpdate : toProcess) {
+                    if (deliveryUpdate.success() && deliveryUpdate.bornTimeMs() > 0) {
+                        // Record latency from Kafka arrival (bornTimeMs) to ACK (now)
+                        metricsService.recordAck(deliveryUpdate.bornTimeMs());
+                    }
+                }
 
                 long duration = System.currentTimeMillis() - startTime;
                 if (duration > 100) {

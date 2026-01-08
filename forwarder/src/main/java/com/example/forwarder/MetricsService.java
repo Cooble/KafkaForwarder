@@ -1,219 +1,247 @@
 package com.example.forwarder;
 
-//import org.HdrHistogram.Recorder;
-//import org.HdrHistogram.Histogram;
-//import org.springframework.beans.factory.annotation.Value;
-//import org.springframework.scheduling.annotation.Scheduled;
-//import org.springframework.stereotype.Service;
-//
-//import java.io.FileWriter;
-//import java.io.PrintWriter;
-//import java.util.concurrent.atomic.LongAdder;
-//
-//@Service
-//public class MetricsService {
-//
-//    // LongAdder is much faster than AtomicLong under high contention
-//    // It keeps separate counters per thread and sums them only when asked.
-//    private final LongAdder ackCount = new LongAdder();
-//    private final LongAdder totalProcessed = new LongAdder();
-//    private final LongAdder sentCount = new LongAdder();
-//    private final LongAdder failedCount = new LongAdder();
-//
-//    // The "Recorder" handles the concurrency and buffering for us.
-//    // It is designed specifically for high-throughput recording.
-//    private final Recorder recorder = new Recorder(3600000000L, 3);
-//
-//    // We reuse this histogram instance to avoid garbage collection
-//    private Histogram intervalHistogram = null;
-//
-//    private PrintWriter csvWriter;
-//    private String transportMode;
-//
-//    // Ramp-up parameters from producer
-//    @Value("${producer.ramp.start.rate:1}")
-//    private double startRate;
-//
-//    @Value("${producer.ramp.end.rate:3000}")
-//    private double endRate;
-//
-//    @Value("${producer.ramp.duration.seconds:300}")
-//    private int rampDurationSeconds;
-//
-//    @Value("${forwarder.transport.mode:rest}")
-//    private String configuredTransportMode;
-//
-//    // Time tracking starts from first received event
-//    private volatile long firstEventTime = -1;
-//    private final long serviceStartTime = System.currentTimeMillis();
-//
-//    public MetricsService() {
-//        // Constructor - file creation happens in @PostConstruct after properties are injected
-//    }
-//
-//    @jakarta.annotation.PostConstruct
-//    public void init() {
-//        try {
-//            transportMode = configuredTransportMode.toUpperCase();
-//            String timestamp = String.valueOf(System.currentTimeMillis());
-//            String filename = "metrics_" + transportMode + "_" + timestamp + ".csv";
-//            csvWriter = new PrintWriter(new FileWriter(filename, true));
-//
-//            // Enhanced CSV header with transport mode and additional metrics
-//            csvWriter.println("TimeSeconds,TransportMode,EmissionRate_PerSec,Throughput_MsgPerSec,SendAttempts_PerSec,Failed_PerSec,CumulativeAcks,CumulativeSent,CumulativeFailed,SuccessRate_%,Mean_ms,P50_ms,P95_ms,P99_ms,P999_ms,Max_ms,StartRate,EndRate,Duration");
-//            csvWriter.flush();
-//
-//            System.out.println("Metrics file created: " + filename + " (Mode: " + transportMode + ")");
-//        } catch (Exception e) {
-//            e.printStackTrace();
-//        }
-//    }
-//
-//    // --- HOT PATH (Called by thousands of threads) ---
-//    // NO 'synchronized'. NO blocking.
-//    public void recordAck(long ingestTimeMs) {
-//        long now = System.currentTimeMillis();
-//        long residenceTime = now - ingestTimeMs;
-//
-//        if (residenceTime < 0) residenceTime = 0;
-//
-//        // Set first event time on first call (thread-safe enough with volatile)
-//        if (firstEventTime == -1) {
-//            firstEventTime = now;
-//        }
-//
-//        // 1. Record Latency (Thread-safe inside Recorder)
-//        recorder.recordValue(residenceTime);
-//
-//        // 2. Increment Throughput Counter
-//        ackCount.increment();
-//    }
-//
-//    // --- BATCH PATH (Called by batch processor) ---
-//    // Records multiple acks at once without expensive loop overhead
-//    public void recordAckBatch(int count, long currentTimeMs) {
-//        // Set first event time on first call
-//        if (firstEventTime == -1) {
-//            firstEventTime = currentTimeMs;
-//        }
-//
-//        // Just increment the counter by batch size
-//        // We skip individual latency recording for batch processing
-//        // to avoid the overhead - throughput metrics are still accurate
-//        ackCount.add(count);
-//    }
-//
-//    // --- SEND TRACKING (Called by SendService/WebSocketSendService) ---
-//    public void recordSendAttempt(int count) {
-//        sentCount.add(count);
-//    }
-//
-//    public void recordSendFailure(int count) {
-//        failedCount.add(count);
-//    }
-//
-//    // --- COLD PATH (Called once per second) ---
-//    @Scheduled(fixedRate = 1000)
-//    public void snapshot() {
-//        // Skip if no events received yet
-//        if (firstEventTime == -1) {
-//            return;
-//        }
-//
-//        // 1. Atomic Swap
-//        // getIntervalHistogram() atomically swaps the active recording buffer
-//        // with a fresh one. Writers barely notice.
-//        intervalHistogram = recorder.getIntervalHistogram(intervalHistogram);
-//
-//        // 2. Get the count for this second and reset the adder
-//        long countThisSecond = ackCount.sumThenReset();
-//        long sentThisSecond = sentCount.sumThenReset();
-//        long failedThisSecond = failedCount.sumThenReset();
-//
-//        totalProcessed.add(countThisSecond);
-//
-//        // Time elapsed since first event (in seconds)
-//        long elapsedMs = System.currentTimeMillis() - firstEventTime;
-//        long elapsedSeconds = elapsedMs / 1000;
-//
-//        // Calculate current emission rate based on ramp-up parameters
-//        double emissionRate;
-//        long rampDurationMs = rampDurationSeconds * 1000L;
-//
-//        if (elapsedMs >= rampDurationMs) {
-//            // Ramp complete, stay at end rate
-//            emissionRate = endRate;
-//        } else {
-//            // Linear ramp: rate = startRate + (progress * range)
-//            double progress = (double) elapsedMs / rampDurationMs;
-//            double rateRange = endRate - startRate;
-//            emissionRate = startRate + (progress * rateRange);
-//        }
-//
-//        // Calculate cumulative sent events (integral of the ramp function)
-//        long cumulativeSent;
-//        if (elapsedMs >= rampDurationMs) {
-//            // During ramp: integral of linear function from 0 to rampDuration
-//            // Area under ramp = (startRate + endRate) / 2 * rampDuration
-//            double rampArea = (startRate + endRate) / 2.0 * rampDurationSeconds;
-//
-//            // After ramp: add constant rate * time after ramp
-//            double timeAfterRamp = (elapsedMs - rampDurationMs) / 1000.0;
-//            cumulativeSent = (long) (rampArea + (endRate * timeAfterRamp));
-//        } else {
-//            // During ramp: integral from 0 to current time
-//            // For linear ramp r(t) = startRate + (t/T) * (endRate - startRate)
-//            // Integral = startRate * t + (1/2) * (t^2/T) * (endRate - startRate)
-//            double t = elapsedMs / 1000.0;
-//            double T = rampDurationSeconds;
-//            double rateRange = endRate - startRate;
-//            cumulativeSent = (long) (startRate * t + 0.5 * (t * t / T) * rateRange);
-//        }
-//
-//        // 3. Calculate percentiles and stats
-//        double mean = intervalHistogram.getMean();
-//        long p50 = intervalHistogram.getValueAtPercentile(50.0);
-//        long p95 = intervalHistogram.getValueAtPercentile(95.0);
-//        long p99 = intervalHistogram.getValueAtPercentile(99.0);
-//        long p999 = intervalHistogram.getValueAtPercentile(99.9);
-//        long max = intervalHistogram.getMaxValue();
-//
-//        // Get cumulative counts
-//        long cumulativeAcks = totalProcessed.sum();
-//        long cumulativeFailed = failedCount.sum();
-//
-//        // Calculate success rate
-//        double successRate = sentThisSecond > 0
-//            ? (countThisSecond * 100.0 / sentThisSecond)
-//            : 100.0;
-//
-//        // 4. Write enhanced CSV with transport mode
-//        csvWriter.printf("%d,%s,%.2f,%d,%d,%d,%d,%d,%d,%.2f,%.2f,%d,%d,%d,%d,%d,%.2f,%.2f,%d%n",
-//                elapsedSeconds,          // TimeSeconds
-//                transportMode,            // TransportMode (REST/WEBSOCKET)
-//                emissionRate,             // EmissionRate_PerSec
-//                countThisSecond,          // Throughput_MsgPerSec (ACKs)
-//                sentThisSecond,           // SendAttempts_PerSec
-//                failedThisSecond,         // Failed_PerSec
-//                cumulativeAcks,           // CumulativeAcks
-//                cumulativeSent,           // CumulativeSent (expected)
-//                cumulativeFailed,         // CumulativeFailed
-//                successRate,              // SuccessRate_%
-//                mean,                     // Mean_ms
-//                p50,                      // P50_ms
-//                p95,                      // P95_ms
-//                p99,                      // P99_ms
-//                p999,                     // P999_ms
-//                max,                      // Max_ms
-//                startRate,                // StartRate
-//                endRate,                  // EndRate
-//                rampDurationSeconds);     // Duration
-//        csvWriter.flush();
-//
-//        if (countThisSecond > 0 || sentThisSecond > 0) {
-//            System.out.printf("[%s] Stats: %d acks/sec (%d sent, %d failed, %.1f%% success) | Cumulative: %d/%d | P99: %dms | Emission: %.2f/sec%n",
-//                    transportMode, countThisSecond, sentThisSecond, failedThisSecond, successRate,
-//                    cumulativeAcks, cumulativeSent, p99, emissionRate);
-//        }
-//    }
-//}
+import org.HdrHistogram.Recorder;
+import org.HdrHistogram.Histogram;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+
+import java.io.FileWriter;
+import java.io.PrintWriter;
+import java.util.concurrent.atomic.LongAdder;
+
+@Service
+public class MetricsService {
+
+    // === ACTUAL MEASURED METRICS (Real data from the system) ===
+    // LongAdder is much faster than AtomicLong under high contention
+    // It keeps separate counters per thread and sums them only when asked.
+    private final LongAdder actualAcksThisSecond = new LongAdder();
+    private final LongAdder actualAcksTotal = new LongAdder();
+    private final LongAdder actualSendAttemptsThisSecond = new LongAdder();
+    private final LongAdder actualFailuresThisSecond = new LongAdder();
+
+    // The "Recorder" handles the concurrency and buffering for us.
+    // It is designed specifically for high-throughput recording.
+    // Tracks ACTUAL latency from Kafka arrival to client ACK
+    private final Recorder actualLatencyRecorder = new Recorder(3600000000L, 3);
+
+    // We reuse this histogram instance to avoid garbage collection
+    private Histogram intervalHistogram = null;
+
+    private PrintWriter csvWriter;
+    private String transportMode;
+
+    // === SYNTHETIC/EXPECTED VALUES (Theoretical calculations based on producer config) ===
+    // These are used to calculate what the producer SHOULD be emitting
+    @Value("${producer.ramp.start.rate:1}")
+    private double expectedStartRate;
+
+    @Value("${producer.ramp.end.rate:3000}")
+    private double expectedEndRate;
+
+    @Value("${producer.ramp.duration.seconds:300}")
+    private int expectedRampDurationSeconds;
+
+    @Value("${producer.ramp.stop.after:true}")
+    private boolean expectedStopAfterRamp;
+
+    @Value("${forwarder.transport.mode:rest}")
+    private String configuredTransportMode;
+
+    // Time tracking starts from first received event
+    private volatile long firstEventTime = -1;
+    private final long serviceStartTime = System.currentTimeMillis();
+
+    public MetricsService() {
+        // Constructor - file creation happens in @PostConstruct after properties are injected
+    }
+
+    @jakarta.annotation.PostConstruct
+    public void init() {
+        try {
+            transportMode = configuredTransportMode.toUpperCase();
+            String timestamp = String.valueOf(System.currentTimeMillis());
+            String filename = "metrics_" + transportMode + "_" + timestamp + ".csv";
+            csvWriter = new PrintWriter(new FileWriter(filename, true));
+
+            // Write configuration metadata as comments at the top of CSV
+            csvWriter.println("# Metrics Configuration");
+            csvWriter.println("# Transport Mode: " + transportMode);
+            csvWriter.println("# Expected Producer Config:");
+            csvWriter.println("#   Start Rate: " + expectedStartRate + " msg/sec");
+            csvWriter.println("#   End Rate: " + expectedEndRate + " msg/sec");
+            csvWriter.println("#   Ramp Duration: " + expectedRampDurationSeconds + " seconds");
+            csvWriter.println("#   Stop After Ramp: " + expectedStopAfterRamp);
+            csvWriter.println("# Timestamp: " + timestamp);
+            csvWriter.println("#");
+
+            // Clean CSV header with only time-series data (no constant columns)
+            csvWriter.println("TimeSeconds,Expected_EmissionRate,Actual_Acks,Actual_SendAttempts,Actual_Failures,Actual_CumulativeAcks,Expected_CumulativeSent,Actual_CumulativeFailures,Actual_SuccessRate_%,Actual_MeanLatency_ms,Actual_P50_ms,Actual_P95_ms,Actual_P99_ms,Actual_P999_ms,Actual_Max_ms");
+            csvWriter.flush();
+
+            // Print configuration to console
+            System.out.println("╔════════════════════════════════════════════════════════════════╗");
+            System.out.println("║ MetricsService Initialized                                     ║");
+            System.out.println("╠════════════════════════════════════════════════════════════════╣");
+            System.out.println("║ Transport Mode:       " + String.format("%-36s", transportMode) + " ║");
+            System.out.println("║ Expected Start Rate:  " + String.format("%-32.0f", expectedStartRate) + " msg/sec ║");
+            System.out.println("║ Expected End Rate:    " + String.format("%-32.0f", expectedEndRate) + " msg/sec ║");
+            System.out.println("║ Expected Ramp:        " + String.format("%-32d", expectedRampDurationSeconds) + " seconds ║");
+            System.out.println("║ Stop After Ramp:      " + String.format("%-36s", expectedStopAfterRamp) + " ║");
+            System.out.println("║ Metrics File:         " + String.format("%-36s", filename) + " ║");
+            System.out.println("╚════════════════════════════════════════════════════════════════╝");
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    // --- HOT PATH (Called by thousands of threads) ---
+    // NO 'synchronized'. NO blocking.
+    public void recordAck(long ingestTimeMs) {
+        long now = System.currentTimeMillis();
+        long actualLatencyMs = now - ingestTimeMs;
+
+        if (actualLatencyMs < 0) actualLatencyMs = 0;
+
+        // Set first event time on first call (thread-safe enough with volatile)
+        if (firstEventTime == -1) {
+            firstEventTime = now;
+        }
+
+        // 1. Record ACTUAL Latency (Thread-safe inside Recorder)
+        actualLatencyRecorder.recordValue(actualLatencyMs);
+
+        // 2. Increment ACTUAL Throughput Counter
+        actualAcksThisSecond.increment();
+    }
+
+    // --- BATCH PATH (Called by batch processor) ---
+    // Records multiple acks at once without expensive loop overhead
+    public void recordAckBatch(int count, long currentTimeMs) {
+        // Set first event time on first call
+        if (firstEventTime == -1) {
+            firstEventTime = currentTimeMs;
+        }
+
+        // Just increment the counter by batch size
+        // We skip individual latency recording for batch processing
+        // to avoid the overhead - throughput metrics are still accurate
+        actualAcksThisSecond.add(count);
+    }
+
+    // --- SEND TRACKING (Called by SendService/WebSocketSendService) ---
+    public void recordSendAttempt(int count) {
+        actualSendAttemptsThisSecond.add(count);
+    }
+
+    public void recordSendFailure(int count) {
+        actualFailuresThisSecond.add(count);
+    }
+
+    // --- COLD PATH (Called once per second) ---
+    @Scheduled(fixedRate = 1000)
+    public void snapshot() {
+        // Skip if no events received yet
+        if (firstEventTime == -1) {
+            return;
+        }
+
+        // 1. Atomic Swap - Get ACTUAL latency histogram for this interval
+        // getIntervalHistogram() atomically swaps the active recording buffer
+        // with a fresh one. Writers barely notice.
+        intervalHistogram = actualLatencyRecorder.getIntervalHistogram(intervalHistogram);
+
+        // 2. Get ACTUAL counts for this second and reset the adders
+        long actualAcks = actualAcksThisSecond.sumThenReset();
+        long actualSendAttempts = actualSendAttemptsThisSecond.sumThenReset();
+        long actualFailures = actualFailuresThisSecond.sumThenReset();
+
+        actualAcksTotal.add(actualAcks);
+
+        // Time elapsed since first event (in seconds)
+        long elapsedMs = System.currentTimeMillis() - firstEventTime;
+        long elapsedSeconds = elapsedMs / 1000;
+
+        // === SYNTHETIC CALCULATION: Expected emission rate based on producer config ===
+        double syntheticEmissionRate;
+        long rampDurationMs = expectedRampDurationSeconds * 1000L;
+
+        if (elapsedMs >= rampDurationMs) {
+            // Ramp complete - check if producer stops or continues at end rate
+            syntheticEmissionRate = expectedStopAfterRamp ? 0 : expectedEndRate;
+        } else {
+            // Linear ramp: rate = startRate + (progress * range)
+            double progress = (double) elapsedMs / rampDurationMs;
+            double rateRange = expectedEndRate - expectedStartRate;
+            syntheticEmissionRate = expectedStartRate + (progress * rateRange);
+        }
+
+        // === SYNTHETIC CALCULATION: Expected cumulative sent events (integral of ramp function) ===
+        long syntheticCumulativeSent;
+        if (elapsedMs >= rampDurationMs) {
+            // Ramp completed - calculate total area under ramp
+            double rampArea = (expectedStartRate + expectedEndRate) / 2.0 * expectedRampDurationSeconds;
+
+            if (expectedStopAfterRamp) {
+                // Producer stops after ramp - no additional messages
+                syntheticCumulativeSent = (long) rampArea;
+            } else {
+                // Producer continues at end rate - add constant rate * time after ramp
+                double timeAfterRamp = (elapsedMs - rampDurationMs) / 1000.0;
+                syntheticCumulativeSent = (long) (rampArea + (expectedEndRate * timeAfterRamp));
+            }
+        } else {
+            // During ramp: integral from 0 to current time
+            // For linear ramp r(t) = startRate + (t/T) * (endRate - startRate)
+            // Integral = startRate * t + (1/2) * (t^2/T) * (endRate - startRate)
+            double t = elapsedMs / 1000.0;
+            double T = expectedRampDurationSeconds;
+            double rateRange = expectedEndRate - expectedStartRate;
+            syntheticCumulativeSent = (long) (expectedStartRate * t + 0.5 * (t * t / T) * rateRange);
+        }
+
+        // 3. Calculate ACTUAL latency percentiles and stats
+        double actualMeanLatency = intervalHistogram.getMean();
+        long actualP50Latency = intervalHistogram.getValueAtPercentile(50.0);
+        long actualP95Latency = intervalHistogram.getValueAtPercentile(95.0);
+        long actualP99Latency = intervalHistogram.getValueAtPercentile(99.0);
+        long actualP999Latency = intervalHistogram.getValueAtPercentile(99.9);
+        long actualMaxLatency = intervalHistogram.getMaxValue();
+
+        // Get ACTUAL cumulative counts
+        long actualCumulativeAcks = actualAcksTotal.sum();
+        long actualCumulativeFailures = actualFailuresThisSecond.sum();
+
+        // Calculate ACTUAL success rate
+        double actualSuccessRate = actualSendAttempts > 0
+            ? (actualAcks * 100.0 / actualSendAttempts)
+            : 100.0;
+
+        // 4. Write CSV with time-series data only (constants are in header comments)
+        csvWriter.printf("%d,%.2f,%d,%d,%d,%d,%d,%d,%.2f,%.2f,%d,%d,%d,%d,%d%n",
+                elapsedSeconds,              // TimeSeconds
+                syntheticEmissionRate,        // Expected emission rate (calculated from config)
+                actualAcks,                   // ACTUAL: Measured ACKs this second
+                actualSendAttempts,           // ACTUAL: Measured send attempts this second
+                actualFailures,               // ACTUAL: Measured failures this second
+                actualCumulativeAcks,         // ACTUAL: Total ACKs received
+                syntheticCumulativeSent,      // Expected total sent (calculated from config)
+                actualCumulativeFailures,     // ACTUAL: Total failures
+                actualSuccessRate,            // ACTUAL: Success rate percentage
+                actualMeanLatency,            // ACTUAL: Mean latency in ms
+                actualP50Latency,             // ACTUAL: P50 latency
+                actualP95Latency,             // ACTUAL: P95 latency
+                actualP99Latency,             // ACTUAL: P99 latency
+                actualP999Latency,            // ACTUAL: P99.9 latency
+                actualMaxLatency);            // ACTUAL: Max latency this second
+        csvWriter.flush();
+
+        if (actualAcks > 0 || actualSendAttempts > 0) {
+            System.out.printf("[%s] ACTUAL: %d acks/sec (%d sent, %d failed, %.1f%% success) | Total: %d acks vs %d expected | P99: %dms | Expected emission: %.2f/sec%n",
+                    transportMode, actualAcks, actualSendAttempts, actualFailures, actualSuccessRate,
+                    actualCumulativeAcks, syntheticCumulativeSent, actualP99Latency, syntheticEmissionRate);
+        }
+    }
+}
+

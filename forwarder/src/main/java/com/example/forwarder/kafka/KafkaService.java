@@ -2,6 +2,7 @@ package com.example.forwarder.kafka;
 
 import com.example.forwarder.DeliveryResultHandler;
 import com.example.forwarder.MessageSender;
+import com.example.forwarder.MetricsService;
 import com.example.forwarder.TransformationService;
 import com.example.forwarder.db.DbService;
 import com.example.forwarder.model.Client;
@@ -35,6 +36,8 @@ public class KafkaService {
     private DbService dbService;
     @Autowired
     private DeliveryResultHandler deliveryResultHandler;
+    @Autowired
+    private MetricsService metricsService;
 
     private static final Logger log = LoggerFactory.getLogger(KafkaService.class);
 
@@ -200,6 +203,9 @@ public class KafkaService {
     }
 
     private void sendBatchToClientAsync(List<ExternalDataTableEntry> dataList, Client client, List<DeliveryStatus> statusList) {
+        // Track send attempt for metrics
+        metricsService.recordSendAttempt(dataList.size());
+
         sendService.sendBatchToClient(dataList, client).thenAccept(result -> {
             // Handle result for all events in the batch
             for (int i = 0; i < statusList.size(); i++) {
@@ -209,7 +215,15 @@ public class KafkaService {
                 MessageSender.SendResult individualResult = new MessageSender.SendResult(result.success(), dataId, result.clientId());
                 deliveryResultHandler.handleSendResult(individualResult, status, client.getClientIdentifier());
             }
+
+            // Track failures if the batch send failed
+            if (!result.success()) {
+                metricsService.recordSendFailure(dataList.size());
+            }
         }).exceptionally(ex -> {
+            // Track failures for exception cases
+            metricsService.recordSendFailure(dataList.size());
+
             // Handle exception for all events in the batch
             for (int i = 0; i < statusList.size(); i++) {
                 deliveryResultHandler.handleSendException(dataList.get(i).getId(), client.getClientIdentifier(), statusList.get(i), ex);

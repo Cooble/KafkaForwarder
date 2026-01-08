@@ -21,6 +21,8 @@ public class ResendService {
     private MessageSender sendService;
     @Autowired
     private DeliveryResultHandler deliveryResultHandler;
+    @Autowired
+    private MetricsService metricsService;
 
     @Value("${forwarder.client.max.batch.size:100}")
     private int maxHttpBatchSize;
@@ -49,7 +51,7 @@ public class ResendService {
         // Collect all unique IDs for batch fetching (avoid N+1 query problem!)
         Set<Long> dataIds = new HashSet<>();
         Set<Long> clientIds = new HashSet<>();
-        
+
         for (DeliveryStatus status : pendingDeliveries) {
             dataIds.add(status.getExternalDataId());
             clientIds.add(status.getClientId());
@@ -59,7 +61,7 @@ public class ResendService {
         Map<Long, ExternalDataTableEntry> dataMap = dbService.getExternalDataByIds(new ArrayList<>(dataIds))
             .stream()
             .collect(java.util.stream.Collectors.toMap(ExternalDataTableEntry::getId, d -> d));
-        
+
         Map<Long, Client> clientMap = dbService.getClientsByIds(new ArrayList<>(clientIds))
             .stream()
             .collect(java.util.stream.Collectors.toMap(Client::getId, c -> c));
@@ -73,7 +75,7 @@ public class ResendService {
 
             if (data == null || client == null) {
                 // Data or client was deleted in the meantime
-                log.debug("Skipping pending delivery - data or client deleted: dataId={}, clientId={}", 
+                log.debug("Skipping pending delivery - data or client deleted: dataId={}, clientId={}",
                     status.getExternalDataId(), status.getClientId());
                 continue;
             }
@@ -113,6 +115,9 @@ public class ResendService {
     }
 
     private void sendBatchToClientAsync(List<ExternalDataTableEntry> dataList, Client client, List<DeliveryStatus> statusList) {
+        // Track retry send attempts for metrics
+        metricsService.recordSendAttempt(dataList.size());
+
         sendService.sendBatchToClient(dataList, client).thenAccept(result -> {
             // Handle result for all events in the batch
             for (int i = 0; i < statusList.size(); i++) {
@@ -122,7 +127,15 @@ public class ResendService {
                 MessageSender.SendResult individualResult = new MessageSender.SendResult(result.success(), dataId, result.clientId());
                 deliveryResultHandler.handleSendResult(individualResult, status, client.getClientIdentifier());
             }
+
+            // Track failures if the batch send failed
+            if (!result.success()) {
+                metricsService.recordSendFailure(dataList.size());
+            }
         }).exceptionally(ex -> {
+            // Track failures for exception cases
+            metricsService.recordSendFailure(dataList.size());
+
             // Handle exception for all events in the batch
             for (int i = 0; i < statusList.size(); i++) {
                 deliveryResultHandler.handleSendException(dataList.get(i).getId(), client.getClientIdentifier(), statusList.get(i), ex);
