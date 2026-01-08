@@ -29,14 +29,14 @@ public class DbService {
         return externalDataRepository.saveAll(dataList);
     }
 
-    public void upsertClient(Client client) {
+    public Client upsertClient(Client client) {
         Client existingClient = clientRepository.findByClientIdentifier(client.getClientIdentifier());
         if (existingClient != null) {
             existingClient.setClientUrl(client.getClientUrl());
             existingClient.setSubscribedTopics(client.getSubscribedTopics());
-            clientRepository.save(existingClient);
+            return clientRepository.save(existingClient);
         } else {
-            clientRepository.save(client);
+            return clientRepository.save(client);
         }
     }
 

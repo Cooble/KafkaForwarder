@@ -28,6 +28,9 @@ public class PublishService {
     @Value("${producer.ramp.duration.seconds:60}")
     private int rampDurationSeconds;
 
+    @Value( "${producer.ramp.stop.after:true}")
+    private boolean stopAfterRamp;
+
     @Autowired
     private KafkaTemplate<String, InternalData> kafkaTemplate;
 
@@ -84,6 +87,15 @@ public class PublishService {
 
             // 2. Send the message
             sendMessage(EventFactory.createNaturalEvent(count++));
+            // If ramp is complete and configured to stop, exit loop
+            if (rampEnabled && stopAfterRamp) {
+                long elapsedMs = System.currentTimeMillis() - startTimeMs;
+                if (elapsedMs >= rampDurationMs) {
+                    log.info("Sent {} events in total during ramp-up.", count);
+                    log.info("Ramp-up complete and stopAfterRamp is true. Stopping spammer.");
+                    break;
+                }
+            }
 
             // 3. Calculate Poisson delay based on current rate (in NANOS)
             double meanIntervalNs = 1_000_000_000.0 / currentRate;

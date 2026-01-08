@@ -18,7 +18,7 @@ public class ResendService {
     @Autowired
     private DbService dbService;
     @Autowired
-    private SendService sendService;
+    private MessageSender sendService;
     @Autowired
     private DeliveryResultHandler deliveryResultHandler;
 
@@ -119,7 +119,7 @@ public class ResendService {
                 DeliveryStatus status = statusList.get(i);
                 Long dataId = dataList.get(i).getId();
                 // Create individual SendResult for each event in the batch
-                SendService.SendResult individualResult = new SendService.SendResult(result.success(), dataId, result.clientId());
+                MessageSender.SendResult individualResult = new MessageSender.SendResult(result.success(), dataId, result.clientId());
                 deliveryResultHandler.handleSendResult(individualResult, status, client.getClientIdentifier());
             }
         }).exceptionally(ex -> {

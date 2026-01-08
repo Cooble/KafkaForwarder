@@ -6,6 +6,7 @@ import com.example.forwarder.model.ExternalDataTableEntry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -18,7 +19,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Service
-public class SendService {
+@ConditionalOnProperty(name = "forwarder.transport.mode", havingValue = "rest", matchIfMissing = true)
+public class SendService implements MessageSender {
     private static final Logger log = LoggerFactory.getLogger(SendService.class);
 
     @Value("${forwarder.client.timeout.ms:10000}")
@@ -32,10 +34,6 @@ public class SendService {
     // Track active HTTP requests to prevent overwhelming the connection pool
     private final AtomicInteger activeRequests = new AtomicInteger(0);
 
-    private final AtomicLong sentCount = new AtomicLong(0);
-    private final AtomicLong successCount = new AtomicLong(0);
-    private final AtomicLong failCount = new AtomicLong(0);
-    private final AtomicLong rejectedCount = new AtomicLong(0);
 
     public SendService(WebClient webClient) {
         this.webClient = webClient;
@@ -63,8 +61,6 @@ public class SendService {
     }
 
     public CompletableFuture<SendResult> sendToClient(ExternalDataTableEntry data, Client client) {
-        sentCount.incrementAndGet();
-
         // Create payload - just send the data, no need for ID wrapper
         ExternalData payload = new ExternalData(
             data.getMsg(),
@@ -78,14 +74,8 @@ public class SendService {
                 .retrieve()
                 .toBodilessEntity()
                 .timeout(Duration.ofMillis(timeoutMs))
-                .map(response -> {
-                    successCount.incrementAndGet();
-                    return new SendResult(true, data.getId(), client.getId());
-                })
-                .onErrorResume(error -> {
-                    failCount.incrementAndGet();
-                    return Mono.just(new SendResult(false, data.getId(), client.getId()));
-                })
+                .map(response -> new SendResult(true, data.getId(), client.getId()))
+                .onErrorResume(error -> Mono.just(new SendResult(false, data.getId(), client.getId())))
                 .toFuture();
     }
 
@@ -101,8 +91,6 @@ public class SendService {
 
         // Check if we have capacity - if not, fail immediately (don't block, don't queue)
         if (!hasCapacity()) {
-            failCount.addAndGet(dataList.size());
-            rejectedCount.addAndGet(dataList.size());
             log.debug("HTTP capacity exhausted ({}/{} active). Rejecting batch of {} events to client {} - will retry later",
                     activeRequests.get(), maxConcurrentRequests, dataList.size(), client.getClientIdentifier());
 
@@ -110,7 +98,6 @@ public class SendService {
             return CompletableFuture.completedFuture(new BatchSendResult(false, dataIds, client.getId()));
         }
 
-        sentCount.addAndGet(dataList.size());
         activeRequests.incrementAndGet();
 
         // Create payload - convert all data entries to ExternalData
@@ -125,31 +112,8 @@ public class SendService {
                 .toBodilessEntity()
                 .timeout(Duration.ofMillis(timeoutMs))
                 .doFinally(signal -> activeRequests.decrementAndGet())  // Always decrement when done
-                .map(response -> {
-                    successCount.addAndGet(dataList.size());
-                    return new BatchSendResult(true, dataIds, client.getId());
-                })
-                .onErrorResume(error -> {
-                    failCount.addAndGet(dataList.size());
-                    return Mono.just(new BatchSendResult(false, dataIds, client.getId()));
-                })
+                .map(response -> new BatchSendResult(true, dataIds, client.getId()))
+                .onErrorResume(error -> Mono.just(new BatchSendResult(false, dataIds, client.getId())))
                 .toFuture();
-    }
-
-    public record SendResult(boolean success, Long dataId, Long clientId) {}
-    public record BatchSendResult(boolean success, List<Long> dataIds, Long clientId) {}
-
-    @Scheduled(fixedRate = 1000)
-    public void logStats() {
-        long sent = sentCount.getAndSet(0);
-        long success = successCount.getAndSet(0);
-        long fail = failCount.getAndSet(0);
-        long rejected = rejectedCount.getAndSet(0);
-        int active = activeRequests.get();
-
-        if (sent > 0 || rejected > 0 || active > 0) {
-            log.info("Send: {} sent/sec ({} success, {} failed, {} rejected due to capacity), {} active requests",
-                    sent, success, fail, rejected, active);
-        }
     }
 }

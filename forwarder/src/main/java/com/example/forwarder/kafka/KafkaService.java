@@ -1,7 +1,7 @@
 package com.example.forwarder.kafka;
 
 import com.example.forwarder.DeliveryResultHandler;
-import com.example.forwarder.SendService;
+import com.example.forwarder.MessageSender;
 import com.example.forwarder.TransformationService;
 import com.example.forwarder.db.DbService;
 import com.example.forwarder.model.Client;
@@ -30,7 +30,7 @@ public class KafkaService {
     @Autowired
     private TransformationService transformationService;
     @Autowired
-    private SendService sendService;
+    private MessageSender sendService;
     @Autowired
     private DbService dbService;
     @Autowired
@@ -41,8 +41,6 @@ public class KafkaService {
     @org.springframework.beans.factory.annotation.Value("${forwarder.client.max.batch.size:100}")
     private int maxHttpBatchSize;
 
-    private final AtomicLong eventsReceived = new AtomicLong(0);
-    private final AtomicLong eventsProcessed = new AtomicLong(0);
 
     // Thread pool for async DB processing (10 parallel workers)
     private final ExecutorService dbExecutor = Executors.newFixedThreadPool(10, new ThreadFactory() {
@@ -77,7 +75,6 @@ public class KafkaService {
             return;
         }
 
-        eventsReceived.addAndGet(records.size());
 
         // Process asynchronously - don't block Kafka consumer thread
         pendingBatches.incrementAndGet();
@@ -189,7 +186,6 @@ public class KafkaService {
                 }
             }
 
-            eventsProcessed.addAndGet(savedData.size());
 
             // ✅ CRITICAL: Only NOW commit the Kafka offset (data is safely in DB)
             // If we crash before this line, Kafka will redeliver the messages
@@ -211,7 +207,7 @@ public class KafkaService {
                 DeliveryStatus status = statusList.get(i);
                 Long dataId = dataList.get(i).getId();
                 // Create individual SendResult for each event in the batch
-                SendService.SendResult individualResult = new SendService.SendResult(result.success(), dataId, result.clientId());
+                MessageSender.SendResult individualResult = new MessageSender.SendResult(result.success(), dataId, result.clientId());
                 deliveryResultHandler.handleSendResult(individualResult, status, client.getClientIdentifier());
             }
         }).exceptionally(ex -> {
@@ -223,16 +219,6 @@ public class KafkaService {
         });
     }
 
-    @Scheduled(fixedRate = 1000)
-    public void logStats() {
-        long received = eventsReceived.getAndSet(0);
-        long processed = eventsProcessed.getAndSet(0);
-        long pending = pendingBatches.get();
-       // if (received > 0 || processed > 0 || pending > 0) {
-            log.info("Kafka: Received {} events/sec, Processed {} events/sec, Pending batches: {}",
-                    received, processed, pending);
-       // }
-    }
 
     // Inner classes to hold event data
     private record EventRecord(InternalData message, String topic, Long offset, long bornTimeMs) {}

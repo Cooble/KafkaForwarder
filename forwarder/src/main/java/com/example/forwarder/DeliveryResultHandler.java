@@ -26,11 +26,6 @@ public class DeliveryResultHandler {
     @Autowired
     private DbService dbService;
 
-    @Autowired
-    private MetricsService metricsService;
-
-    private final AtomicLong acksReceived = new AtomicLong(0);
-    private final AtomicLong failedDeliveries = new AtomicLong(0);
 
     // Lock-free queue to decouple HTTP callbacks from DB updates
     private final ConcurrentLinkedQueue<DeliveryUpdate> updateQueue = new ConcurrentLinkedQueue<>();
@@ -64,7 +59,7 @@ public class DeliveryResultHandler {
      * Queues the update for async processing - does NOT block HTTP thread.
      * Lock-free operation for maximum throughput.
      */
-    public void handleSendResult(SendService.SendResult result, DeliveryStatus status, String clientIdentifier) {
+    public void handleSendResult(MessageSender.SendResult result, DeliveryStatus status, String clientIdentifier) {
         if (result.success()) {
             // Check soft limit before adding (prevents unbounded growth)
             long currentSize = queueSize.get();
@@ -78,11 +73,8 @@ public class DeliveryResultHandler {
             // Lock-free add - no contention between HTTP threads
             updateQueue.add(new DeliveryUpdate(result.dataId(), result.clientId(), status.getBornTimeMs(), true));
             queueSize.incrementAndGet();
-            acksReceived.incrementAndGet();
-        } else {
-            // Leave as pending - ResendService will retry later
-            failedDeliveries.incrementAndGet();
         }
+        // Leave as pending - ResendService will retry later
     }
 
     /**
@@ -92,7 +84,6 @@ public class DeliveryResultHandler {
     public void handleSendException(Long dataId, String clientIdentifier, DeliveryStatus status, Throwable ex) {
         log.debug("Exception sending data {} to client {}: {}", dataId, clientIdentifier, ex.getMessage());
         // Leave as pending - ResendService will retry later
-        failedDeliveries.incrementAndGet();
     }
 
     /**
@@ -138,10 +129,6 @@ public class DeliveryResultHandler {
                 // This DB call now runs in background thread pool
                 int processed = dbService.markAsConfirmedBatch(toProcess);
 
-                // Record metrics in batch (much faster than loop)
-                long now = System.currentTimeMillis();
-                metricsService.recordAckBatch(batchSize, now);
-
                 long duration = System.currentTimeMillis() - startTime;
                 if (duration > 100) {
                     log.warn("Slow batch processing: {} updates in {}ms ({} updates/sec)",
@@ -155,18 +142,6 @@ public class DeliveryResultHandler {
         }, batchExecutor);
     }
 
-    @Scheduled(fixedRate = 1000)
-    public void logStats() {
-        long acks = acksReceived.getAndSet(0);
-        long fails = failedDeliveries.getAndSet(0);
-        long dropped = droppedUpdates.getAndSet(0);
-        int queueSize = updateQueue.size();
-
-        if (acks > 0 || fails > 0 || dropped > 0 || queueSize > 100) {
-            log.info("Delivery: {} ACKs/sec, {} failed/sec, queue={}{}",
-                acks, fails, queueSize, dropped > 0 ? ", DROPPED=" + dropped : "");
-        }
-    }
 
     /**
      * Gracefully shutdown the batch executor on application shutdown.
