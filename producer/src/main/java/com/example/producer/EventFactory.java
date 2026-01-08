@@ -17,7 +17,7 @@ public class EventFactory {
         String documentId = "DOC-" + sequenceId;
         String customerId = "CUST-" + (sequenceId % 5000);
         String currency = "USD";
-        long totalCents = 10_000L + random.nextLong(0, 10_000L);
+        long totalCents = sequenceId;  // Use as unique identifier for sanity checks
 
         // Build a padded notes field to target ~1KB total payload
         StringBuilder filler = new StringBuilder();

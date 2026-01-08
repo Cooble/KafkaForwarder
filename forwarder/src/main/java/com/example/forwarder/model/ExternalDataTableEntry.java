@@ -39,8 +39,7 @@ public class ExternalDataTableEntry {
     @Column(name = "total_cents")
     private Long totalCents;
 
-    @Lob
-    @Column(name = "payload_json")
+    @Column(name = "payload_json", columnDefinition = "TEXT")
     private String payloadJson;
 
     @Column(name = "sequence_number")

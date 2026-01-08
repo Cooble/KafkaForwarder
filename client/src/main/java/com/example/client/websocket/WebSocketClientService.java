@@ -21,7 +21,10 @@ import org.springframework.web.socket.client.WebSocketClient;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Service
@@ -52,6 +55,7 @@ public class WebSocketClientService extends TextWebSocketHandler {
 
     private final AtomicLong totalEventsReceived = new AtomicLong(0);
     private final AtomicLong eventsReceivedSinceLastLog = new AtomicLong(0);
+    private final Set<Long> uniqueEventIds = Collections.newSetFromMap(new ConcurrentHashMap<>());
 
     @PostConstruct
     public void connectOnStartup() {
@@ -144,6 +148,7 @@ public class WebSocketClientService extends TextWebSocketHandler {
         int count = dataMessage.data().size();
         totalEventsReceived.addAndGet(count);
         eventsReceivedSinceLastLog.addAndGet(count);
+        dataMessage.data().forEach(data -> uniqueEventIds.add(data.totalCents()));
 
         log.debug("Received batch of {} events", count);
 
@@ -180,9 +185,11 @@ public class WebSocketClientService extends TextWebSocketHandler {
     public void logStats() {
         long eventsSinceLastLog = eventsReceivedSinceLastLog.getAndSet(0);
         long total = totalEventsReceived.get();
+        int unique = uniqueEventIds.size();
+        long duplicates = total - unique;
 
-        log.info("Received {} events in last second | Total: {} events",
-                    eventsSinceLastLog, total);
+        log.info("Received {} events in last second | Total: {} | Unique: {} | Duplicates: {}",
+                    eventsSinceLastLog, total, unique, duplicates);
 
     }
 

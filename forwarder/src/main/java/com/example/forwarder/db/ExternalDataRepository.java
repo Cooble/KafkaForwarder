@@ -20,6 +20,13 @@ public interface ExternalDataRepository extends JpaRepository<ExternalDataTableE
     List<ExternalDataTableEntry> findByEventIdIn(@Param("eventIds") List<String> eventIds);
 
     /**
+     * Find which eventIds already exist in the database - returns only the eventId strings.
+     * Used to determine which records are new vs already existing before upsert.
+     */
+    @Query("SELECT e.eventId FROM ExternalDataTableEntry e WHERE e.eventId IN :eventIds")
+    List<String> findExistingEventIds(@Param("eventIds") List<String> eventIds);
+
+    /**
      * Idempotent insert using MERGE - inserts only if event_id doesn't exist.
      * Works with both H2 and PostgreSQL.
      * Returns number of rows inserted (0 if duplicate).

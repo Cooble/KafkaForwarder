@@ -11,6 +11,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import org.springframework.beans.factory.annotation.Value;
+
 import java.sql.PreparedStatement;
 import java.sql.Timestamp;
 import java.util.*;
@@ -19,6 +21,13 @@ import java.util.*;
 @Service
 public class DbService {
     private static final Logger log = LoggerFactory.getLogger(DbService.class);
+
+    private final boolean isPostgres;
+
+    public DbService(@Value("${spring.profiles.active:h2}") String activeProfile) {
+        this.isPostgres = "postgres".equalsIgnoreCase(activeProfile);
+        log.info("DbService initialized with database profile: {} (isPostgres={})", activeProfile, isPostgres);
+    }
 
     @Autowired
     private ExternalDataRepository externalDataRepository;
@@ -30,8 +39,12 @@ public class DbService {
     private JdbcTemplate jdbcTemplate;
 
     /**
-     * Saves external data using native JDBC batch MERGE - truly idempotent, single DB operation.
-     * Uses JDBC batch to execute all MERGEs in one round trip.
+     * Saves external data using native JDBC batch upsert - truly idempotent, single DB operation.
+     * Uses JDBC batch to execute all upserts in one round trip.
+     * Automatically uses H2 MERGE or PostgreSQL INSERT ON CONFLICT based on active profile.
+     *
+     * IMPORTANT: Only returns NEWLY INSERTED records, not already existing ones.
+     * This prevents duplicate DeliveryStatus creation on Kafka message redelivery.
      */
     @Transactional
     public List<ExternalDataTableEntry> saveAllExternalData(List<ExternalDataTableEntry> dataList) {
@@ -39,12 +52,33 @@ public class DbService {
             return List.of();
         }
 
-        // Execute batch MERGE - all statements in ONE database round trip
-        String sql = """
-            MERGE INTO external_data_table_entry (event_id, topic, document_id, customer_id, currency, total_cents, payload_json, sequence_number, received_at)
-            KEY(event_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """;
+        // First, find which eventIds already exist (to exclude them from the result)
+        List<String> eventIds = dataList.stream()
+                .map(ExternalDataTableEntry::getEventId)
+                .toList();
+        Set<String> existingEventIds = new HashSet<>(externalDataRepository.findExistingEventIds(eventIds));
+
+        // Execute batch upsert - all statements in ONE database round trip
+        // Use database-specific SQL syntax
+        String sql = isPostgres
+            ? """
+                INSERT INTO external_data_table_entry (event_id, topic, document_id, customer_id, currency, total_cents, payload_json, sequence_number, received_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (event_id) DO UPDATE SET
+                    topic = EXCLUDED.topic,
+                    document_id = EXCLUDED.document_id,
+                    customer_id = EXCLUDED.customer_id,
+                    currency = EXCLUDED.currency,
+                    total_cents = EXCLUDED.total_cents,
+                    payload_json = EXCLUDED.payload_json,
+                    sequence_number = EXCLUDED.sequence_number,
+                    received_at = EXCLUDED.received_at
+                """
+            : """
+                MERGE INTO external_data_table_entry (event_id, topic, document_id, customer_id, currency, total_cents, payload_json, sequence_number, received_at)
+                KEY(event_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """;
 
         jdbcTemplate.batchUpdate(sql, dataList, dataList.size(), (PreparedStatement ps, ExternalDataTableEntry data) -> {
             ps.setString(1, data.getEventId());
@@ -58,12 +92,18 @@ public class DbService {
             ps.setTimestamp(9, Timestamp.valueOf(data.getReceivedAt()));
         });
 
-        // Fetch all records by eventId to get their generated IDs
-        List<String> eventIds = dataList.stream()
-                .map(ExternalDataTableEntry::getEventId)
+        // Only fetch NEWLY INSERTED records (exclude already existing ones)
+        List<String> newEventIds = eventIds.stream()
+                .filter(id -> !existingEventIds.contains(id))
                 .toList();
 
-        return externalDataRepository.findByEventIdIn(eventIds);
+        if (newEventIds.isEmpty()) {
+            log.debug("All {} records already existed - no new data to process", dataList.size());
+            return List.of();
+        }
+
+        log.debug("Inserted {} new records, {} already existed", newEventIds.size(), existingEventIds.size());
+        return externalDataRepository.findByEventIdIn(newEventIds);
     }
 
     public Client upsertClient(Client client) {
