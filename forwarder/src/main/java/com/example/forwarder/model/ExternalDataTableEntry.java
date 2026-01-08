@@ -9,7 +9,8 @@ import java.time.LocalDateTime;
     indexes = {
         @Index(name = "idx_external_data_sequence", columnList = "sequence_number"),
         @Index(name = "idx_external_data_topic", columnList = "topic"),
-        @Index(name = "idx_external_data_event_id", columnList = "event_id")
+        @Index(name = "idx_external_data_event_id", columnList = "event_id"),
+        @Index(name = "idx_external_data_doc", columnList = "document_id")
     },
     uniqueConstraints = {
         @UniqueConstraint(name = "uk_event_id", columnNames = "event_id")
@@ -26,14 +27,21 @@ public class ExternalDataTableEntry {
     @Column(name = "topic")
     private String topic;
 
-    @Column(name = "msg", length = 4096)
-    private String msg;
+    @Column(name = "document_id", length = 200)
+    private String documentId;
 
-    @Column(name = "name")
-    private String name;
+    @Column(name = "customer_id", length = 200)
+    private String customerId;
 
-    @Column(name = "external_new")
-    private String externalNew;
+    @Column(name = "currency", length = 8)
+    private String currency;
+
+    @Column(name = "total_cents")
+    private Long totalCents;
+
+    @Lob
+    @Column(name = "payload_json")
+    private String payloadJson;
 
     @Column(name = "sequence_number")
     private Long sequenceNumber;  // Kafka offset - maintains message order
@@ -45,12 +53,21 @@ public class ExternalDataTableEntry {
         this.receivedAt = LocalDateTime.now();
     }
 
-    public ExternalDataTableEntry(String eventId, String topic, String msg, String name, String externalNew, Long sequenceNumber) {
+    public ExternalDataTableEntry(String eventId,
+                                  String topic,
+                                  String documentId,
+                                  String customerId,
+                                  String currency,
+                                  Long totalCents,
+                                  String payloadJson,
+                                  Long sequenceNumber) {
         this.eventId = eventId;
         this.topic = topic;
-        this.msg = msg;
-        this.name = name;
-        this.externalNew = externalNew;
+        this.documentId = documentId;
+        this.customerId = customerId;
+        this.currency = currency;
+        this.totalCents = totalCents;
+        this.payloadJson = payloadJson;
         this.sequenceNumber = sequenceNumber;
         this.receivedAt = LocalDateTime.now();
     }
@@ -79,28 +96,44 @@ public class ExternalDataTableEntry {
         this.topic = topic;
     }
 
-    public String getMsg() {
-        return msg;
+    public String getDocumentId() {
+        return documentId;
     }
 
-    public void setMsg(String msg) {
-        this.msg = msg;
+    public void setDocumentId(String documentId) {
+        this.documentId = documentId;
     }
 
-    public String getName() {
-        return name;
+    public String getCustomerId() {
+        return customerId;
     }
 
-    public void setName(String name) {
-        this.name = name;
+    public void setCustomerId(String customerId) {
+        this.customerId = customerId;
     }
 
-    public String getExternalNew() {
-        return externalNew;
+    public String getCurrency() {
+        return currency;
     }
 
-    public void setExternalNew(String externalNew) {
-        this.externalNew = externalNew;
+    public void setCurrency(String currency) {
+        this.currency = currency;
+    }
+
+    public Long getTotalCents() {
+        return totalCents;
+    }
+
+    public void setTotalCents(Long totalCents) {
+        this.totalCents = totalCents;
+    }
+
+    public String getPayloadJson() {
+        return payloadJson;
+    }
+
+    public void setPayloadJson(String payloadJson) {
+        this.payloadJson = payloadJson;
     }
 
     public LocalDateTime getReceivedAt() {

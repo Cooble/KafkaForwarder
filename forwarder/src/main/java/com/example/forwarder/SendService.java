@@ -5,6 +5,7 @@ import com.example.forwarder.model.Client;
 import com.example.forwarder.model.ExternalDataTableEntry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -26,6 +27,9 @@ public class SendService {
 
     @Value("${forwarder.client.max.concurrent.requests:500}")
     private int maxConcurrentRequests;
+
+    @Autowired
+    private TransformationService transformationService;
 
     private final WebClient webClient;
 
@@ -66,11 +70,7 @@ public class SendService {
         sentCount.incrementAndGet();
 
         // Create payload - just send the data, no need for ID wrapper
-        ExternalData payload = new ExternalData(
-            data.getMsg(),
-            data.getName(),
-            data.getExternalNew()
-        );
+        ExternalData payload = transformationService.transform(data);
 
         return webClient.post()
                 .uri(client.getClientUrl() + "/data")
@@ -115,7 +115,7 @@ public class SendService {
 
         // Create payload - convert all data entries to ExternalData
         List<ExternalData> payload = dataList.stream()
-                .map(data -> new ExternalData(data.getMsg(), data.getName(), data.getExternalNew()))
+                .map(data -> transformationService.transform(data))
                 .toList();
 
         return webClient.post()
