@@ -192,16 +192,8 @@ public class ForwarderPipeline {
         metricsService.recordSendAttempt(dataList.size());
 
         messageSender.sendBatchToClient(dataList, client).thenAccept(result -> {
-            // Handle result for all events in the batch
-            for (int i = 0; i < statusList.size(); i++) {
-                DeliveryStatus status = statusList.get(i);
-                Long dataId = dataList.get(i).getId();
-                MessageSender.SendResult individualResult = new MessageSender.SendResult(
-                    result.success(), dataId, result.clientId()
-                );
-                deliveryResultHandler.handleSendResult(individualResult, status, client.getClientIdentifier());
-            }
-
+            // Batch-aware result handling
+            deliveryResultHandler.handleBatchSendResult(result, statusList, client.getClientIdentifier());
             if (!result.success()) {
                 metricsService.recordSendFailure(dataList.size());
             }

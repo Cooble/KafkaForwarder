@@ -163,6 +163,27 @@ public class DeliveryResultHandler {
         });
     }
 
+      /**
+     * Handles a batch send result for multiple delivery statuses at once.
+     * This is more efficient than per-event handling.
+     */
+    public void handleBatchSendResult(MessageSender.BatchSendResult batchResult, List<DeliveryStatus> statuses, String clientIdentifier) {
+        if (batchResult.success()) {
+            long currentSize = queueSize.get();
+            if (currentSize + statuses.size() > MAX_QUEUE_SIZE) {
+                droppedUpdates.addAndGet(statuses.size());
+                log.error("Update queue overflow! Size={}, Dropped {} data for client {}", currentSize, statuses.size(), clientIdentifier);
+                return;
+            }
+            for (int i = 0; i < statuses.size(); i++) {
+                DeliveryStatus status = statuses.get(i);
+                updateQueue.add(new DeliveryUpdate(batchResult.dataIds().get(i), batchResult.clientId(), status.getBornTimeMs(), true));
+            }
+            queueSize.addAndGet(statuses.size());
+        }
+        // If failed, leave as pending for retry
+    }
+
     public long getQueueSize() {
         return queueSize.get();
     }
@@ -171,4 +192,3 @@ public class DeliveryResultHandler {
         return droppedUpdates.get();
     }
 }
-

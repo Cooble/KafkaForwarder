@@ -68,10 +68,7 @@ public class WebSocketSendService implements MessageSender {
         }
 
         // Queue the batch - sender thread will handle actual sending
-        CompletableFuture<Boolean> sendFuture = sender.queueBatch(dataList);
-
-        // Transform boolean result to BatchSendResult
-        return sendFuture.thenApply(success -> new BatchSendResult(success, dataIds, client.getId()));
+        boolean success = sender.queueBatch(dataList);
+        return CompletableFuture.completedFuture(new BatchSendResult(success, dataIds, client.getId()));
     }
 }
-

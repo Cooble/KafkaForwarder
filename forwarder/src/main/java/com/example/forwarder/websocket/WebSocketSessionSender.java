@@ -58,12 +58,12 @@ public class WebSocketSessionSender implements Runnable {
 
     /**
      * Queue a batch of data to be sent. Returns immediately (non-blocking).
-     * If queue is full, drops the message and returns failed future.
-     * The future completes immediately - ACK tracking is handled separately via DB.
+     * If queue is full, drops the message and returns false.
+     * ACK tracking is handled separately via DeliveryResultHandler to update DB.
      */
-    public CompletableFuture<Boolean> queueBatch(List<ExternalDataTableEntry> dataList) {
+    public boolean queueBatch(List<ExternalDataTableEntry> dataList) {
         if (!running.get() || !session.isOpen()) {
-            return CompletableFuture.completedFuture(false);
+            return false;
         }
 
         List<Long> dataIds = dataList.stream().map(ExternalDataTableEntry::getId).toList();
@@ -80,10 +80,10 @@ public class WebSocketSessionSender implements Runnable {
         if (sendQueue.offer(task)) {
             // Return success immediately - we don't wait for ACK via futures
             // ACK will be handled separately and update DB directly
-            return CompletableFuture.completedFuture(true);
+            return true;
         } else {
             log.warn("Send queue full for client {} - dropping batch of {}", clientId, dataIds.size());
-            return CompletableFuture.completedFuture(false);
+            return false;
         }
     }
 
@@ -185,4 +185,3 @@ public class WebSocketSessionSender implements Runnable {
         List<Long> dataIds
     ) {}
 }
-
