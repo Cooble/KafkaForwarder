@@ -8,7 +8,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
@@ -17,12 +16,11 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 
 @Service
 @ConditionalOnProperty(name = "forwarder.transport.mode", havingValue = "rest", matchIfMissing = true)
-public class SendService implements MessageSender {
-    private static final Logger log = LoggerFactory.getLogger(SendService.class);
+public class RestSendService implements MessageSender {
+    private static final Logger log = LoggerFactory.getLogger(RestSendService.class);
 
     @Value("${forwarder.client.timeout.ms:10000}")
     private int timeoutMs;
@@ -40,7 +38,7 @@ public class SendService implements MessageSender {
     private final AtomicInteger activeRequests = new AtomicInteger(0);
 
 
-    public SendService(WebClient webClient) {
+    public RestSendService(WebClient webClient) {
         this.webClient = webClient;
     }
 
