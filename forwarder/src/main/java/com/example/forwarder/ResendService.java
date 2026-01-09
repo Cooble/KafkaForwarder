@@ -4,6 +4,8 @@ import com.example.forwarder.db.DbService;
 import com.example.forwarder.model.Client;
 import com.example.forwarder.model.DeliveryStatus;
 import com.example.forwarder.model.ExternalDataTableEntry;
+import com.example.forwarder.pipeline.ForwarderPipeline;
+import com.example.forwarder.pipeline.ForwarderPipeline.ClientBatch;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,142 +14,105 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
+/**
+ * Retries pending deliveries by reusing the pipeline's dispatch stage.
+ * No longer duplicates send logic - delegates to ForwarderPipeline.
+ */
 @Service
 public class ResendService {
+    private static final Logger log = LoggerFactory.getLogger(ResendService.class);
+
     @Autowired
     private DbService dbService;
     @Autowired
-    private MessageSender sendService;
+    private MessageSender messageSender;
     @Autowired
-    private DeliveryResultHandler deliveryResultHandler;
-    @Autowired
-    private MetricsService metricsService;
-
-    @Value("${forwarder.client.max.batch.size:100}")
-    private int maxHttpBatchSize;
+    private ForwarderPipeline pipeline;
 
     @Value("${forwarder.retry.grace.period.ms:10000}")
     private long retryGracePeriodMs;
-
-    private static final Logger log = LoggerFactory.getLogger(ResendService.class);
 
     @Scheduled(fixedDelayString = "${forwarder.retry.check.interval.ms:10000}")
     public void resendPendingDeliveries() {
         log.debug("Checking for pending deliveries to retry...");
 
-        // Check if we have HTTP capacity - if not, skip this retry cycle
-        if (!sendService.hasCapacity()) {
-            log.debug("No HTTP capacity available ({} active). Skipping retry cycle - will try again later",
-                    sendService.getActiveRequests());
+        // Check if we have capacity - if not, skip this retry cycle
+        if (!messageSender.hasCapacity()) {
+            log.debug("No capacity available ({} active). Skipping retry cycle",
+                    messageSender.getActiveRequests());
             return;
         }
 
         List<DeliveryStatus> pendingDeliveries = dbService.getPendingDeliveries(retryGracePeriodMs);
-
         if (pendingDeliveries.isEmpty()) {
             return;
         }
 
-        //log.info("Found {} pending deliveries to retry (ordered by sequence number)", pendingDeliveries.size());
+        // Batch fetch all data and clients (avoid N+1)
+        Set<Long> dataIds = pendingDeliveries.stream()
+            .map(DeliveryStatus::getExternalDataId)
+            .collect(Collectors.toSet());
+        Set<Long> clientIds = pendingDeliveries.stream()
+            .map(DeliveryStatus::getClientId)
+            .collect(Collectors.toSet());
 
-        // Collect all unique IDs for batch fetching (avoid N+1 query problem!)
-        Set<Long> dataIds = new HashSet<>();
-        Set<Long> clientIds = new HashSet<>();
-
-        for (DeliveryStatus status : pendingDeliveries) {
-            dataIds.add(status.getExternalDataId());
-            clientIds.add(status.getClientId());
-        }
-
-        // Batch fetch all data and clients in TWO queries instead of N queries!
         Map<Long, ExternalDataTableEntry> dataMap = dbService.getExternalDataByIds(new ArrayList<>(dataIds))
             .stream()
-            .collect(java.util.stream.Collectors.toMap(ExternalDataTableEntry::getId, d -> d));
+            .collect(Collectors.toMap(ExternalDataTableEntry::getId, d -> d));
 
         Map<Long, Client> clientMap = dbService.getClientsByIds(new ArrayList<>(clientIds))
             .stream()
-            .collect(java.util.stream.Collectors.toMap(Client::getId, c -> c));
+            .collect(Collectors.toMap(Client::getId, c -> c));
 
-        // Group pending deliveries by client (same as KafkaService does)
-        Map<Long, List<PendingDeliveryItem>> deliveriesByClient = new HashMap<>();
+        // Build ClientBatch objects for the pipeline (reuse same structure)
+        Map<Long, ClientBatchBuilder> batchBuilders = new HashMap<>();
 
         for (DeliveryStatus status : pendingDeliveries) {
             ExternalDataTableEntry data = dataMap.get(status.getExternalDataId());
             Client client = clientMap.get(status.getClientId());
 
             if (data == null || client == null) {
-                // Data or client was deleted in the meantime
                 log.debug("Skipping pending delivery - data or client deleted: dataId={}, clientId={}",
                     status.getExternalDataId(), status.getClientId());
                 continue;
             }
 
-            deliveriesByClient.computeIfAbsent(client.getId(), k -> new ArrayList<>())
-                .add(new PendingDeliveryItem(data, status, client));
+            batchBuilders
+                .computeIfAbsent(client.getId(), k -> new ClientBatchBuilder(client))
+                .add(data, status);
         }
 
-        // Send batched HTTP requests per client (same pattern as KafkaService)
-        for (var entry : deliveriesByClient.entrySet()) {
-            List<PendingDeliveryItem> items = entry.getValue();
-            if (items.isEmpty()) continue;
+        // Convert to ClientBatch and dispatch using pipeline
+        List<ClientBatch> clientBatches = batchBuilders.values().stream()
+            .map(ClientBatchBuilder::build)
+            .toList();
 
-            Client client = items.get(0).client;
+        // Dispatch using the pipeline's dispatch stage (reuses all the chunking, capacity checks, result handling)
+        pipeline.dispatchStage(clientBatches);
+    }
 
-            // Split into chunks to avoid huge payloads (same as KafkaService)
-            for (int i = 0; i < items.size(); i += maxHttpBatchSize) {
-                // Check capacity before each batch - stop if exhausted
-                if (!sendService.hasCapacity()) {
-                    log.debug("HTTP capacity exhausted during retry. Stopping - remaining will retry next cycle");
-                    return;  // Exit completely - let next retry cycle handle remaining
-                }
+    /**
+     * Builder for constructing ClientBatch.
+     */
+    private static class ClientBatchBuilder {
+        private final Client client;
+        private final List<ExternalDataTableEntry> dataList = new ArrayList<>();
+        private final List<DeliveryStatus> statusList = new ArrayList<>();
 
-                int end = Math.min(i + maxHttpBatchSize, items.size());
-                List<PendingDeliveryItem> chunk = items.subList(i, end);
+        ClientBatchBuilder(Client client) {
+            this.client = client;
+        }
 
-                List<ExternalDataTableEntry> dataList = chunk.stream()
-                    .map(item -> item.data)
-                    .toList();
-                List<DeliveryStatus> statusList = chunk.stream()
-                    .map(item -> item.status)
-                    .toList();
+        void add(ExternalDataTableEntry data, DeliveryStatus status) {
+            dataList.add(data);
+            statusList.add(status);
+        }
 
-                sendBatchToClientAsync(dataList, client, statusList);
-            }
+        ClientBatch build() {
+            return new ClientBatch(client, dataList, statusList);
         }
     }
-
-    private void sendBatchToClientAsync(List<ExternalDataTableEntry> dataList, Client client, List<DeliveryStatus> statusList) {
-        // Track retry send attempts for metrics
-        metricsService.recordSendAttempt(dataList.size());
-
-        sendService.sendBatchToClient(dataList, client).thenAccept(result -> {
-            // Handle result for all events in the batch
-            for (int i = 0; i < statusList.size(); i++) {
-                DeliveryStatus status = statusList.get(i);
-                Long dataId = dataList.get(i).getId();
-                // Create individual SendResult for each event in the batch
-                MessageSender.SendResult individualResult = new MessageSender.SendResult(result.success(), dataId, result.clientId());
-                deliveryResultHandler.handleSendResult(individualResult, status, client.getClientIdentifier());
-            }
-
-            // Track failures if the batch send failed
-            if (!result.success()) {
-                metricsService.recordSendFailure(dataList.size());
-            }
-        }).exceptionally(ex -> {
-            // Track failures for exception cases
-            metricsService.recordSendFailure(dataList.size());
-
-            // Handle exception for all events in the batch
-            for (int i = 0; i < statusList.size(); i++) {
-                deliveryResultHandler.handleSendException(dataList.get(i).getId(), client.getClientIdentifier(), statusList.get(i), ex);
-            }
-            return null;
-        });
-    }
-
-    // Helper record to hold pending delivery data
-    private record PendingDeliveryItem(ExternalDataTableEntry data, DeliveryStatus status, Client client) {}
 }
 

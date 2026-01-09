@@ -2,13 +2,13 @@ package com.example.forwarder;
 
 import com.example.forwarder.db.DbService;
 import com.example.forwarder.model.DeliveryStatus;
+import com.example.forwarder.pipeline.ForwarderExecutorService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
-import jakarta.annotation.PreDestroy;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.*;
@@ -18,6 +18,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * Handles the result of sending data to clients.
  * Centralizes the logic for marking deliveries as confirmed.
  * Uses lock-free async queuing to decouple HTTP threads from DB operations.
+ *
+ * Now uses ForwarderExecutorService instead of its own thread pool.
  */
 @Service
 public class DeliveryResultHandler {
@@ -29,6 +31,8 @@ public class DeliveryResultHandler {
     @Autowired
     private MetricsService metricsService;
 
+    @Autowired
+    private ForwarderExecutorService executorService;
 
     // Lock-free queue to decouple HTTP callbacks from DB updates
     private final ConcurrentLinkedQueue<DeliveryUpdate> updateQueue = new ConcurrentLinkedQueue<>();
@@ -36,17 +40,6 @@ public class DeliveryResultHandler {
     private final AtomicLong droppedUpdates = new AtomicLong(0);
     private static final int MAX_QUEUE_SIZE = 20000; // Soft limit
 
-    // Dedicated thread pool for async DB batch processing
-    // Multiple threads to handle concurrent batch writes without blocking scheduler
-    private final ExecutorService batchExecutor = Executors.newFixedThreadPool(4, new ThreadFactory() {
-        private final AtomicLong threadId = new AtomicLong(0);
-        @Override
-        public Thread newThread(Runnable r) {
-            Thread t = new Thread(r, "db-batch-processor-" + threadId.incrementAndGet());
-            t.setDaemon(true);
-            return t;
-        }
-    });
 
     // Track active async tasks to prevent overwhelming the DB
     private final AtomicLong activeBatchTasks = new AtomicLong(0);
@@ -140,22 +133,19 @@ public class DeliveryResultHandler {
         queueSize.addAndGet(-drained);
 
         // Process asynchronously - DON'T block scheduler thread!
-        // This is the key improvement - scheduler can keep draining queue
-        final List<DeliveryUpdate> toProcess = batch; // Final for lambda
+        final List<DeliveryUpdate> toProcess = batch;
         final int batchSize = toProcess.size();
 
         activeBatchTasks.incrementAndGet();
 
-        CompletableFuture.runAsync(() -> {
+        executorService.submitAckTask(() -> {
             long startTime = System.currentTimeMillis();
             try {
-                // This DB call now runs in background thread pool
                 int processed = dbService.markAsConfirmedBatch(toProcess);
 
                 // Record metrics for each ACK - track time from Kafka arrival to ACK
                 for (DeliveryUpdate deliveryUpdate : toProcess) {
                     if (deliveryUpdate.success() && deliveryUpdate.bornTimeMs() > 0) {
-                        // Record latency from Kafka arrival (bornTimeMs) to ACK (now)
                         metricsService.recordAck(deliveryUpdate.bornTimeMs());
                     }
                 }
@@ -170,29 +160,15 @@ public class DeliveryResultHandler {
             } finally {
                 activeBatchTasks.decrementAndGet();
             }
-        }, batchExecutor);
+        });
     }
 
+    public long getQueueSize() {
+        return queueSize.get();
+    }
 
-    /**
-     * Gracefully shutdown the batch executor on application shutdown.
-     * Waits for in-flight batches to complete before terminating.
-     */
-    @PreDestroy
-    public void shutdown() {
-        log.info("Shutting down DeliveryResultHandler - {} active batch tasks", activeBatchTasks.get());
-        batchExecutor.shutdown();
-        try {
-            if (!batchExecutor.awaitTermination(10, TimeUnit.SECONDS)) {
-                log.warn("Batch executor did not terminate in time, forcing shutdown");
-                batchExecutor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            log.error("Interrupted during shutdown", e);
-            batchExecutor.shutdownNow();
-            Thread.currentThread().interrupt();
-        }
-        log.info("DeliveryResultHandler shutdown complete - queue size: {}", updateQueue.size());
+    public long getDroppedUpdates() {
+        return droppedUpdates.get();
     }
 }
 

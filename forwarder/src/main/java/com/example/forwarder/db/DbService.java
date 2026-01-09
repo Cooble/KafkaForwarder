@@ -1,6 +1,6 @@
 package com.example.forwarder.db;
 
-import com.example.forwarder.kafka.KafkaService;
+import com.example.forwarder.pipeline.ForwarderPipeline;
 import com.example.forwarder.model.Client;
 import com.example.forwarder.model.DeliveryStatus;
 import com.example.forwarder.model.ExternalDataTableEntry;
@@ -147,7 +147,7 @@ public class DbService {
     }
 
     @Transactional
-    public List<DeliveryStatus> createDeliveryStatusesBatch(List<KafkaService.DeliveryStatusRequest> requests) {
+    public List<DeliveryStatus> createDeliveryStatusesBatch(List<ForwarderPipeline.DeliveryStatusRequest> requests) {
         List<DeliveryStatus> statuses = requests.stream()
                 .map(req -> new DeliveryStatus(req.dataId(), req.clientId(), req.bornTimeMs()))
                 .toList();
