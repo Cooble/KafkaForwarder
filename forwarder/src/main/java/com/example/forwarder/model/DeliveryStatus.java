@@ -8,7 +8,8 @@ import jakarta.persistence.*;
                 @UniqueConstraint(columnNames = {"external_data_id", "client_id"})
         },
         indexes = {
-                @Index(name = "idx_delivery_status_data_confirmed", columnList = "external_data_id, confirmed")
+                @Index(name = "idx_delivery_status_data_confirmed", columnList = "external_data_id, confirmed"),
+                @Index(name = "idx_pending_retry", columnList = "confirmed, born_time_ms, client_id")
         }
 )
 public class DeliveryStatus {

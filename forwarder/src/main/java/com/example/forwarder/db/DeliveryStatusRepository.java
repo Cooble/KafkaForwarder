@@ -23,11 +23,13 @@ public interface DeliveryStatusRepository extends JpaRepository<DeliveryStatus, 
 
 
     /**
-     * Get pending deliveries ordered by data ID - used by ResendService.
-     * Returns entities because we need full objects for resending.
+     * Get pending deliveries that are older than the cutoff time (grace period).
+     * Only returns entries where bornTimeMs < cutoffTimeMs to avoid retrying events
+     * that are still awaiting ACK processing.
+     * Ordered by bornTimeMs (oldest first) and clientId for efficient batching.
      */
-    @Query("SELECT d FROM DeliveryStatus d WHERE d.confirmed = false ORDER BY d.externalDataId, d.id")
-    List<DeliveryStatus> findPendingOrderedByDataId();
+    @Query("SELECT d FROM DeliveryStatus d WHERE d.confirmed = false AND d.bornTimeMs < :cutoffTimeMs ORDER BY d.bornTimeMs, d.clientId")
+    List<DeliveryStatus> findPendingForRetry(@Param("cutoffTimeMs") long cutoffTimeMs);
 
     /**
      * Bulk update - marks multiple delivery statuses as confirmed in a single UPDATE statement.

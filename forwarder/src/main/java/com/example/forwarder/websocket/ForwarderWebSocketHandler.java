@@ -3,8 +3,8 @@ package com.example.forwarder.websocket;
 import com.example.common.AckMessage;
 import com.example.common.RegistrationRequest;
 import com.example.common.WebSocketMessage;
-import com.example.forwarder.db.DbService;
 import com.example.forwarder.model.Client;
+import com.example.forwarder.registry.ClientRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,7 +31,7 @@ public class ForwarderWebSocketHandler extends TextWebSocketHandler {
     private WebSocketSendService sendService;
 
     @Autowired
-    private DbService dbService;
+    private ClientRegistry clientRegistry;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -76,7 +76,7 @@ public class ForwarderWebSocketHandler extends TextWebSocketHandler {
         log.info("Client registering via WebSocket: {} for topics {}", clientIdentifier, registration.topics());
 
         Client client = new Client(clientIdentifier, "", registration.topics());
-        Client savedClient = dbService.upsertClient(client);
+        Client savedClient = clientRegistry.registerClient(client);
 
         // Pass client identifier to session manager for logging
         sessionManager.addSession(savedClient.getId(), savedClient.getClientIdentifier(), session);

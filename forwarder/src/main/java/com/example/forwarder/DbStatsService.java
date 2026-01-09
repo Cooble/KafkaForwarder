@@ -48,8 +48,8 @@ public class DbStatsService {
         long pendingDeliveries = deliveryStatusRepository.countPending();
         long clientCount = clientRepository.count();
 
-        log.info("DB Stats: ExternalData={}, DeliveryStatus={} (pending={}), Clients={}",
-                externalDataCount, deliveryStatusCount, pendingDeliveries, clientCount);
+        //log.info("DB Stats: ExternalData={}, DeliveryStatus={} (pending={}), Clients={}",
+       //         externalDataCount, deliveryStatusCount, pendingDeliveries, clientCount);
     }
 
     /**

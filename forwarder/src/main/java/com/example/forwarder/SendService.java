@@ -36,6 +36,7 @@ public class SendService implements MessageSender {
     private final WebClient webClient;
 
     // Track active HTTP requests to prevent overwhelming the connection pool
+    //todo maybe use some adder so that it will be parallel friendly? (for each thread separate counter)
     private final AtomicInteger activeRequests = new AtomicInteger(0);
 
 
@@ -62,21 +63,6 @@ public class SendService implements MessageSender {
      */
     public int getAvailableCapacity() {
         return maxConcurrentRequests - activeRequests.get();
-    }
-
-    public CompletableFuture<SendResult> sendToClient(ExternalDataTableEntry data, Client client) {
-        // Create payload - just send the data, no need for ID wrapper
-        ExternalData payload = transformationService.transform(data);
-
-        return webClient.post()
-                .uri(client.getClientUrl() + "/data")
-                .bodyValue(payload)
-                .retrieve()
-                .toBodilessEntity()
-                .timeout(Duration.ofMillis(timeoutMs))
-                .map(response -> new SendResult(true, data.getId(), client.getId()))
-                .onErrorResume(error -> Mono.just(new SendResult(false, data.getId(), client.getId())))
-                .toFuture();
     }
 
     /**

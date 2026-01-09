@@ -12,8 +12,6 @@ import java.util.concurrent.CompletableFuture;
  */
 public interface MessageSender {
 
-    CompletableFuture<SendResult> sendToClient(ExternalDataTableEntry data, Client client);
-
     CompletableFuture<BatchSendResult> sendBatchToClient(List<ExternalDataTableEntry> dataList, Client client);
 
     boolean hasCapacity();

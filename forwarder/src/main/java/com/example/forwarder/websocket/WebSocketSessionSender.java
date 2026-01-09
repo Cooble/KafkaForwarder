@@ -3,6 +3,7 @@ package com.example.forwarder.websocket;
 import com.example.common.DataMessage;
 import com.example.common.ExternalData;
 import com.example.common.WebSocketMessage;
+import com.example.forwarder.TransformationService;
 import com.example.forwarder.model.ExternalDataTableEntry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -30,6 +31,7 @@ public class WebSocketSessionSender implements Runnable {
     private final String clientIdentifier;
     private final WebSocketSession session;
     private final ObjectMapper objectMapper;
+    private final TransformationService transformationService;
 
     // Dedicated queue for this session - multiple threads can safely add to it
     private final BlockingQueue<SendTask> sendQueue;
@@ -40,11 +42,12 @@ public class WebSocketSessionSender implements Runnable {
     private final AtomicBoolean running = new AtomicBoolean(true);
 
     public WebSocketSessionSender(Long clientId, String clientIdentifier, WebSocketSession session,
-                                   ObjectMapper objectMapper) {
+                                  ObjectMapper objectMapper, TransformationService transformationService) {
         this.clientId = clientId;
         this.clientIdentifier = clientIdentifier;
         this.session = session;
         this.objectMapper = objectMapper;
+        this.transformationService = transformationService;
         this.sendQueue = new LinkedBlockingQueue<>(MAX_QUEUE_SIZE);
         this.senderThread = new Thread(this, "ws-sender-client-" + clientId);
         this.senderThread.setDaemon(true);
@@ -65,9 +68,8 @@ public class WebSocketSessionSender implements Runnable {
 
         List<Long> dataIds = dataList.stream().map(ExternalDataTableEntry::getId).toList();
         List<ExternalData> externalDataList = dataList.stream()
-                .map(data -> new ExternalData(data.getDocumentId(), data.getCustomerId(),
-                        data.getCurrency(), data.getTotalCents(), data.getPayloadJson()))
-                .toList();
+            .map(transformationService::transform)
+            .toList();
 
         DataMessage payload = new DataMessage(dataIds, externalDataList);
         WebSocketMessage wsMessage = new WebSocketMessage(WebSocketMessage.MessageType.DATA, payload);

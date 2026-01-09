@@ -6,6 +6,7 @@ import com.example.forwarder.MetricsService;
 import com.example.forwarder.TransformationService;
 import com.example.forwarder.db.DbService;
 import com.example.forwarder.model.Client;
+import com.example.forwarder.registry.ClientRegistry;
 import com.example.forwarder.model.DeliveryStatus;
 import com.example.forwarder.model.ExternalDataTableEntry;
 import com.example.common.InternalData;
@@ -13,6 +14,7 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -35,13 +37,15 @@ public class KafkaService {
     @Autowired
     private DbService dbService;
     @Autowired
+    private ClientRegistry clientRegistry;
+    @Autowired
     private DeliveryResultHandler deliveryResultHandler;
     @Autowired
     private MetricsService metricsService;
 
     private static final Logger log = LoggerFactory.getLogger(KafkaService.class);
 
-    @org.springframework.beans.factory.annotation.Value("${forwarder.client.max.batch.size:100}")
+    @Value("${forwarder.client.max.batch.size:100}")
     private int maxHttpBatchSize;
 
 
@@ -112,12 +116,12 @@ public class KafkaService {
             // 2. SINGLE DB CALL: Batch save all external data
             List<ExternalDataTableEntry> savedData = dbService.saveAllExternalData(externalDataList);
 
-            // 3. SINGLE DB CALL: Get all clients for all unique topics
+            // 3. Get all clients for all unique topics (from in-memory cache - no DB call!)
             List<String> uniqueTopics = eventRecords.stream()
                 .map(EventRecord::topic)
                 .distinct()
                 .toList();
-            Map<String, List<Client>> topicClientsMap = dbService.getClientsByTopics(uniqueTopics);
+            Map<String, List<Client>> topicClientsMap = clientRegistry.getClientsByTopics(uniqueTopics);
 
             // 4. Prepare all delivery status requests in memory
             List<DeliveryStatusRequest> allStatusRequests = new ArrayList<>();

@@ -27,6 +27,9 @@ public class ResendService {
     @Value("${forwarder.client.max.batch.size:100}")
     private int maxHttpBatchSize;
 
+    @Value("${forwarder.retry.grace.period.ms:10000}")
+    private long retryGracePeriodMs;
+
     private static final Logger log = LoggerFactory.getLogger(ResendService.class);
 
     @Scheduled(fixedDelayString = "${forwarder.retry.check.interval.ms:10000}")
@@ -40,13 +43,13 @@ public class ResendService {
             return;
         }
 
-        List<DeliveryStatus> pendingDeliveries = dbService.getPendingDeliveries();
+        List<DeliveryStatus> pendingDeliveries = dbService.getPendingDeliveries(retryGracePeriodMs);
 
         if (pendingDeliveries.isEmpty()) {
             return;
         }
 
-        log.info("Found {} pending deliveries to retry (ordered by sequence number)", pendingDeliveries.size());
+        //log.info("Found {} pending deliveries to retry (ordered by sequence number)", pendingDeliveries.size());
 
         // Collect all unique IDs for batch fetching (avoid N+1 query problem!)
         Set<Long> dataIds = new HashSet<>();

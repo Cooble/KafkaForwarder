@@ -2,6 +2,7 @@ package com.example.forwarder.websocket;
 
 import com.example.common.AckMessage;
 import com.example.forwarder.DeliveryResultHandler;
+import com.example.forwarder.TransformationService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,13 +28,16 @@ public class WebSocketSessionManager {
     @Autowired
     private DeliveryResultHandler deliveryResultHandler;
 
+    @Autowired
+    private TransformationService transformationService;
+
     private final Map<Long, WebSocketSessionSender> senders = new ConcurrentHashMap<>();
     private final Map<Long, String> clientIdentifiers = new ConcurrentHashMap<>();
 
     public void addSession(Long clientId, String clientIdentifier, WebSocketSession session) {
         // Create dedicated sender thread for this session
         WebSocketSessionSender sender = new WebSocketSessionSender(
-            clientId, clientIdentifier, session, objectMapper
+            clientId, clientIdentifier, session, objectMapper,transformationService
         );
 
         // Remove old sender if exists (reconnect case)

@@ -46,7 +46,6 @@ public class WebSocketSendService implements MessageSender {
         return Integer.MAX_VALUE;
     }
 
-    @Override
     public CompletableFuture<SendResult> sendToClient(ExternalDataTableEntry data, Client client) {
         // For single messages, just wrap in a batch
         return sendBatchToClient(List.of(data), client)

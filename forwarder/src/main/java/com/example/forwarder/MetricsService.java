@@ -1,5 +1,6 @@
 package com.example.forwarder;
 
+import com.example.common.RampupConfig;
 import com.example.forwarder.db.DeliveryStatusRepository;
 import org.HdrHistogram.Recorder;
 import org.HdrHistogram.Histogram;
@@ -42,20 +43,27 @@ public class MetricsService {
 
     // === SYNTHETIC/EXPECTED VALUES (Theoretical calculations based on producer config) ===
     // These are used to calculate what the producer SHOULD be emitting
-    @Value("${producer.ramp.start.rate:1}")
+    // Loaded from rampup.properties
+    @Value("${rampup.enabled:true}")
+    private boolean rampupEnabled;
+
+    @Value("${rampup.start.rate:1}")
     private double expectedStartRate;
 
-    @Value("${producer.ramp.end.rate:3000}")
+    @Value("${rampup.end.rate:3000}")
     private double expectedEndRate;
 
-    @Value("${producer.ramp.duration.seconds:300}")
+    @Value("${rampup.duration.seconds:300}")
     private int expectedRampDurationSeconds;
 
-    @Value("${producer.ramp.stop.after:true}")
+    @Value("${rampup.stop.after:true}")
     private boolean expectedStopAfterRamp;
 
     @Value("${forwarder.transport.mode:rest}")
     private String configuredTransportMode;
+
+    // Shared ramp-up calculation logic
+    private RampupConfig rampupConfig;
 
     // Time tracking starts from first received event
     private volatile long firstEventTime = -1;
@@ -68,6 +76,10 @@ public class MetricsService {
     @jakarta.annotation.PostConstruct
     public void init() {
         try {
+            // Create shared ramp-up config
+            rampupConfig = new RampupConfig(rampupEnabled, expectedStartRate, expectedEndRate,
+                    expectedRampDurationSeconds, expectedStopAfterRamp);
+
             transportMode = configuredTransportMode.toUpperCase();
             String timestamp = String.valueOf(System.currentTimeMillis());
             String filename = "metrics_" + transportMode + "_" + timestamp + ".csv";
@@ -76,11 +88,7 @@ public class MetricsService {
             // Write configuration metadata as comments at the top of CSV
             csvWriter.println("# Metrics Configuration");
             csvWriter.println("# Transport Mode: " + transportMode);
-            csvWriter.println("# Expected Producer Config:");
-            csvWriter.println("#   Start Rate: " + expectedStartRate + " msg/sec");
-            csvWriter.println("#   End Rate: " + expectedEndRate + " msg/sec");
-            csvWriter.println("#   Ramp Duration: " + expectedRampDurationSeconds + " seconds");
-            csvWriter.println("#   Stop After Ramp: " + expectedStopAfterRamp);
+            csvWriter.println("# Rampup Config: " + rampupConfig);
             csvWriter.println("# Timestamp: " + timestamp);
             csvWriter.println("#");
 
@@ -93,10 +101,7 @@ public class MetricsService {
             System.out.println("║ MetricsService Initialized                                     ║");
             System.out.println("╠════════════════════════════════════════════════════════════════╣");
             System.out.println("║ Transport Mode:       " + String.format("%-36s", transportMode) + " ║");
-            System.out.println("║ Expected Start Rate:  " + String.format("%-32.0f", expectedStartRate) + " msg/sec ║");
-            System.out.println("║ Expected End Rate:    " + String.format("%-32.0f", expectedEndRate) + " msg/sec ║");
-            System.out.println("║ Expected Ramp:        " + String.format("%-32d", expectedRampDurationSeconds) + " seconds ║");
-            System.out.println("║ Stop After Ramp:      " + String.format("%-36s", expectedStopAfterRamp) + " ║");
+            System.out.println("║ Rampup Config:        " + String.format("%-36s", rampupConfig) + " ║");
             System.out.println("║ Metrics File:         " + String.format("%-36s", filename) + " ║");
             System.out.println("╚════════════════════════════════════════════════════════════════╝");
         } catch (Exception e) {
@@ -122,20 +127,6 @@ public class MetricsService {
 
         // 2. Increment ACTUAL Throughput Counter
         actualAcksThisSecond.increment();
-    }
-
-    // --- BATCH PATH (Called by batch processor) ---
-    // Records multiple acks at once without expensive loop overhead
-    public void recordAckBatch(int count, long currentTimeMs) {
-        // Set first event time on first call
-        if (firstEventTime == -1) {
-            firstEventTime = currentTimeMs;
-        }
-
-        // Just increment the counter by batch size
-        // We skip individual latency recording for batch processing
-        // to avoid the overhead - throughput metrics are still accurate
-        actualAcksThisSecond.add(count);
     }
 
     // --- KAFKA TRACKING (Called by KafkaService when events arrive) ---
@@ -179,43 +170,9 @@ public class MetricsService {
         long elapsedMs = System.currentTimeMillis() - firstEventTime;
         long elapsedSeconds = elapsedMs / 1000;
 
-        // === SYNTHETIC CALCULATION: Expected emission rate based on producer config ===
-        double syntheticEmissionRate;
-        long rampDurationMs = expectedRampDurationSeconds * 1000L;
-
-        if (elapsedMs >= rampDurationMs) {
-            // Ramp complete - check if producer stops or continues at end rate
-            syntheticEmissionRate = expectedStopAfterRamp ? 0 : expectedEndRate;
-        } else {
-            // Linear ramp: rate = startRate + (progress * range)
-            double progress = (double) elapsedMs / rampDurationMs;
-            double rateRange = expectedEndRate - expectedStartRate;
-            syntheticEmissionRate = expectedStartRate + (progress * rateRange);
-        }
-
-        // === SYNTHETIC CALCULATION: Expected cumulative sent events (integral of ramp function) ===
-        long syntheticCumulativeSent;
-        if (elapsedMs >= rampDurationMs) {
-            // Ramp completed - calculate total area under ramp
-            double rampArea = (expectedStartRate + expectedEndRate) / 2.0 * expectedRampDurationSeconds;
-
-            if (expectedStopAfterRamp) {
-                // Producer stops after ramp - no additional messages
-                syntheticCumulativeSent = (long) rampArea;
-            } else {
-                // Producer continues at end rate - add constant rate * time after ramp
-                double timeAfterRamp = (elapsedMs - rampDurationMs) / 1000.0;
-                syntheticCumulativeSent = (long) (rampArea + (expectedEndRate * timeAfterRamp));
-            }
-        } else {
-            // During ramp: integral from 0 to current time
-            // For linear ramp r(t) = startRate + (t/T) * (endRate - startRate)
-            // Integral = startRate * t + (1/2) * (t^2/T) * (endRate - startRate)
-            double t = elapsedMs / 1000.0;
-            double T = expectedRampDurationSeconds;
-            double rateRange = expectedEndRate - expectedStartRate;
-            syntheticCumulativeSent = (long) (expectedStartRate * t + 0.5 * (t * t / T) * rateRange);
-        }
+        // === SYNTHETIC CALCULATION: Use shared RampupConfig for calculations ===
+        double syntheticEmissionRate = rampupConfig.getCurrentRate(elapsedMs);
+        long syntheticCumulativeSent = rampupConfig.getCumulativeEvents(elapsedMs);
 
         // 3. Calculate ACTUAL latency percentiles and stats
         double actualMeanLatency = intervalHistogram.getMean();

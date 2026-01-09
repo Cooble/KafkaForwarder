@@ -185,9 +185,11 @@ public class DbService {
         return updated;
     }
 
-    public List<DeliveryStatus> getPendingDeliveries() {
-        // Native SQL query already orders by externalDataId and id - no need for Java sorting!
-        return deliveryStatusRepository.findPendingOrderedByDataId();
+    public List<DeliveryStatus> getPendingDeliveries(long gracePeriodMs) {
+        // Calculate cutoff time - only retry entries older than grace period
+        // This prevents resending events that are still awaiting ACK processing
+        long cutoffTimeMs = System.currentTimeMillis() - gracePeriodMs;
+        return deliveryStatusRepository.findPendingForRetry(cutoffTimeMs);
     }
 
     public Optional<ExternalDataTableEntry> getExternalDataById(Long id) {
