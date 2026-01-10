@@ -94,6 +94,11 @@ public class ForwarderPipeline {
         // 1. Batch save all external data (single DB call)
         List<ExternalDataTableEntry> savedData = dbService.saveAllExternalData(externalDataList);
 
+        // Record how many Kafka events were accepted/persisted
+        if (!savedData.isEmpty()) {
+            metricsService.recordKafkaAccepted(savedData.size());
+        }
+
         if (savedData.isEmpty()) {
             return PersistResult.empty();
         }
@@ -190,6 +195,7 @@ public class ForwarderPipeline {
 
     private void sendChunkAsync(List<ExternalDataTableEntry> dataList, Client client, List<DeliveryStatus> statusList) {
         metricsService.recordSendAttempt(dataList.size());
+        metricsService.recordSendEvents(dataList.size());
 
         messageSender.sendBatchToClient(dataList, client).thenAccept(result -> {
             // Batch-aware result handling

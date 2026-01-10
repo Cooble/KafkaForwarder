@@ -21,11 +21,19 @@ public class MetricsService {
     // It keeps separate counters per thread and sums them only when asked.
     private final LongAdder actualKafkaReceivedThisSecond = new LongAdder();  // Events received from Kafka
     private final LongAdder actualKafkaReceivedTotal = new LongAdder();       // Total events from Kafka
+    private final LongAdder actualKafkaAcceptedThisSecond = new LongAdder();  // Events persisted/accepted into DB
+    private final LongAdder actualKafkaAcceptedTotal = new LongAdder();       // Cumulative accepted events
     private final LongAdder actualAcksThisSecond = new LongAdder();
     private final LongAdder actualAcksTotal = new LongAdder();
+    private final LongAdder actualSendEventsThisSecond = new LongAdder();     // Events included in outbound sends
+    private final LongAdder actualSendEventsTotal = new LongAdder();
     private final LongAdder actualSendAttemptsThisSecond = new LongAdder();
     private final LongAdder actualFailuresThisSecond = new LongAdder();
     private final LongAdder actualFailuresTotal = new LongAdder();  // FIX: Cumulative failures (never resets)
+    private final LongAdder dbBatchCountThisSecond = new LongAdder();         // DB batches executed (acks persisted)
+    private final LongAdder dbRowsUpdatedThisSecond = new LongAdder();        // Rows updated per second
+    private final LongAdder dbTimeMsThisSecond = new LongAdder();             // Total DB time spent this second
+    private final LongAdder dbRowsUpdatedTotal = new LongAdder();             // Cumulative rows updated
 
     // The "Recorder" handles the concurrency and buffering for us.
     // It is designed specifically for high-throughput recording.
@@ -93,7 +101,7 @@ public class MetricsService {
             csvWriter.println("#");
 
             // Clean CSV header with only time-series data (no constant columns)
-            csvWriter.println("TimeSeconds,Expected_EmissionRate,Actual_KafkaReceived,Actual_Acks,Actual_SendAttempts,Actual_Failures,Actual_CumulativeKafkaReceived,Actual_CumulativeAcks,Expected_CumulativeSent,Actual_CumulativeFailures,Actual_PendingDeliveries,Actual_Lag_Behind,Actual_SuccessRate_%,Actual_MeanLatency_ms,Actual_P50_ms,Actual_P95_ms,Actual_P99_ms,Actual_P999_ms,Actual_Max_ms");
+            csvWriter.println("TimeSeconds,Expected_EmissionRate,Actual_KafkaReceived,Actual_KafkaAccepted,Actual_SendEvents,Actual_Acks,Actual_SendAttempts,Actual_Failures,Actual_DbBatches,Actual_DbRowsUpdated,Actual_DbTimeMs,Actual_CumulativeKafkaReceived,Actual_CumulativeKafkaAccepted,Actual_CumulativeSendEvents,Actual_CumulativeAcks,Actual_CumulativeDbRowsUpdated,Expected_CumulativeSent,Actual_CumulativeFailures,Actual_PendingDeliveries,Actual_Lag_Behind,Actual_SuccessRate_%,Actual_MeanLatency_ms,Actual_P50_ms,Actual_P95_ms,Actual_P99_ms,Actual_P999_ms,Actual_Max_ms");
             csvWriter.flush();
 
             // Print configuration to console
@@ -134,13 +142,29 @@ public class MetricsService {
         actualKafkaReceivedThisSecond.add(eventCount);
     }
 
+    // --- PERSIST TRACKING (Called after data is stored) ---
+    public void recordKafkaAccepted(int eventCount) {
+        actualKafkaAcceptedThisSecond.add(eventCount);
+    }
+
     // --- SEND TRACKING (Called by SendService/WebSocketSendService) ---
     public void recordSendAttempt(int count) {
         actualSendAttemptsThisSecond.add(count);
     }
 
+    public void recordSendEvents(int count) {
+        actualSendEventsThisSecond.add(count);
+    }
+
     public void recordSendFailure(int count) {
         actualFailuresThisSecond.add(count);
+    }
+
+    // --- DB TRACKING (Called by DeliveryResultHandler when persisting ACKs) ---
+    public void recordDbWrite(int rowsUpdated, long durationMs) {
+        dbBatchCountThisSecond.increment();
+        dbRowsUpdatedThisSecond.add(rowsUpdated);
+        dbTimeMsThisSecond.add(Math.max(durationMs, 0));
     }
 
     // --- COLD PATH (Called once per second) ---
@@ -158,13 +182,21 @@ public class MetricsService {
 
         // 2. Get ACTUAL counts for this second and reset the adders
         long actualKafkaReceived = actualKafkaReceivedThisSecond.sumThenReset();
+        long actualKafkaAccepted = actualKafkaAcceptedThisSecond.sumThenReset();
+        long actualSendEvents = actualSendEventsThisSecond.sumThenReset();
         long actualAcks = actualAcksThisSecond.sumThenReset();
         long actualSendAttempts = actualSendAttemptsThisSecond.sumThenReset();
         long actualFailures = actualFailuresThisSecond.sumThenReset();
+        long dbBatches = dbBatchCountThisSecond.sumThenReset();
+        long dbRowsUpdated = dbRowsUpdatedThisSecond.sumThenReset();
+        long dbTimeMs = dbTimeMsThisSecond.sumThenReset();
 
         actualKafkaReceivedTotal.add(actualKafkaReceived);
+        actualKafkaAcceptedTotal.add(actualKafkaAccepted);
+        actualSendEventsTotal.add(actualSendEvents);
         actualAcksTotal.add(actualAcks);
         actualFailuresTotal.add(actualFailures);  // FIX: Accumulate failures properly
+        dbRowsUpdatedTotal.add(dbRowsUpdated);
 
         // Time elapsed since first event (in seconds)
         long elapsedMs = System.currentTimeMillis() - firstEventTime;
@@ -184,8 +216,11 @@ public class MetricsService {
 
         // Get ACTUAL cumulative counts
         long actualCumulativeKafkaReceived = actualKafkaReceivedTotal.sum();
+        long actualCumulativeKafkaAccepted = actualKafkaAcceptedTotal.sum();
+        long actualCumulativeSendEvents = actualSendEventsTotal.sum();
         long actualCumulativeAcks = actualAcksTotal.sum();
         long actualCumulativeFailures = actualFailuresTotal.sum();  // FIX: Use the proper cumulative counter
+        long actualCumulativeDbRowsUpdated = dbRowsUpdatedTotal.sum();
 
         // Query DB for pending deliveries count (how healthy we are)
         long actualPendingDeliveries = deliveryStatusRepository.countPending();
@@ -199,15 +234,23 @@ public class MetricsService {
             : 100.0;
 
         // 4. Write CSV with time-series data only (constants are in header comments)
-        csvWriter.printf("%d,%.2f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.2f,%.2f,%d,%d,%d,%d,%d%n",
+        csvWriter.printf("%d,%.2f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.2f,%.2f,%d,%d,%d,%d,%d%n",
                 elapsedSeconds,                 // TimeSeconds
                 syntheticEmissionRate,          // Expected emission rate (calculated from config)
                 actualKafkaReceived,            // ACTUAL: Events received from Kafka this second
+                actualKafkaAccepted,            // ACTUAL: Events persisted/accepted this second
+                actualSendEvents,               // ACTUAL: Events included in outbound sends this second
                 actualAcks,                     // ACTUAL: Measured ACKs this second
                 actualSendAttempts,             // ACTUAL: Measured send attempts this second
                 actualFailures,                 // ACTUAL: Measured failures this second
+                dbBatches,                      // ACTUAL: DB batches executed this second
+                dbRowsUpdated,                  // ACTUAL: Rows updated this second
+                dbTimeMs,                       // ACTUAL: DB time spent this second (ms)
                 actualCumulativeKafkaReceived,  // ACTUAL: Total events received from Kafka
+                actualCumulativeKafkaAccepted,  // ACTUAL: Total events persisted/accepted
+                actualCumulativeSendEvents,     // ACTUAL: Total events sent outbound
                 actualCumulativeAcks,           // ACTUAL: Total ACKs received
+                actualCumulativeDbRowsUpdated,  // ACTUAL: Total rows updated in DB
                 syntheticCumulativeSent,        // Expected total sent (calculated from config)
                 actualCumulativeFailures,       // ACTUAL: Total failures (FIXED)
                 actualPendingDeliveries,        // ACTUAL: Pending deliveries in DB (health indicator)

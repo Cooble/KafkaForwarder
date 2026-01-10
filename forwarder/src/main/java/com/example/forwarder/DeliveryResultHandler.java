@@ -142,6 +142,7 @@ public class DeliveryResultHandler {
             long startTime = System.currentTimeMillis();
             try {
                 int processed = dbService.markAsConfirmedBatch(toProcess);
+                metricsService.recordDbWrite(processed, System.currentTimeMillis() - startTime);
 
                 // Record metrics for each ACK - track time from Kafka arrival to ACK
                 for (DeliveryUpdate deliveryUpdate : toProcess) {
