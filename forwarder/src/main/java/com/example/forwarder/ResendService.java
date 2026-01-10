@@ -1,6 +1,7 @@
 package com.example.forwarder;
 
 import com.example.forwarder.db.DbService;
+import com.example.forwarder.MetricsService;
 import com.example.forwarder.model.Client;
 import com.example.forwarder.model.DeliveryStatus;
 import com.example.forwarder.model.ExternalDataTableEntry;
@@ -30,6 +31,8 @@ public class ResendService {
     private MessageSender messageSender;
     @Autowired
     private ForwarderPipeline pipeline;
+    @Autowired
+    private MetricsService metricsService;
 
     @Value("${forwarder.retry.grace.period.ms:10000}")
     private long retryGracePeriodMs;
@@ -41,12 +44,14 @@ public class ResendService {
         // Check if we have capacity - if not, skip this retry cycle
         if (!messageSender.hasCapacity()) {
             log.debug("No capacity available ({} active). Skipping retry cycle",
-                    messageSender.getActiveRequests());
+                messageSender.getActiveRequests());
+            metricsService.recordRetryCycle(0, 0, true);
             return;
         }
 
         List<DeliveryStatus> pendingDeliveries = dbService.getPendingDeliveries(retryGracePeriodMs);
         if (pendingDeliveries.isEmpty()) {
+            metricsService.recordRetryCycle(0, 0, false);
             return;
         }
 
@@ -88,6 +93,9 @@ public class ResendService {
         List<ClientBatch> clientBatches = batchBuilders.values().stream()
             .map(ClientBatchBuilder::build)
             .toList();
+
+        int totalDispatched = clientBatches.stream().mapToInt(cb -> cb.dataList().size()).sum();
+        metricsService.recordRetryCycle(pendingDeliveries.size(), totalDispatched, false);
 
         // Dispatch using the pipeline's dispatch stage (reuses all the chunking, capacity checks, result handling)
         pipeline.dispatchStage(clientBatches);
