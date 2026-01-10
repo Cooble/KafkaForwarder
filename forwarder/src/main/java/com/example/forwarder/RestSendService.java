@@ -76,7 +76,7 @@ public class RestSendService implements MessageSender {
         // Check if we have capacity - if not, fail immediately (don't block, don't queue)
         if (!hasCapacity()) {
             log.debug("HTTP capacity exhausted ({}/{} active). Rejecting batch of {} events to client {} - will retry later",
-                    activeRequests.get(), maxConcurrentRequests, dataList.size(), client.getClientIdentifier());
+                    activeRequests.sum(), maxConcurrentRequests, dataList.size(), client.getClientIdentifier());
 
             // Return failed result immediately - retry mechanism will handle it later
             return CompletableFuture.completedFuture(new BatchSendResult(false, dataIds, client.getId()));
