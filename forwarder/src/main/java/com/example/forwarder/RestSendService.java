@@ -15,7 +15,7 @@ import reactor.core.publisher.Mono;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.LongAdder;
 
 @Service
 @ConditionalOnProperty(name = "forwarder.transport.mode", havingValue = "rest", matchIfMissing = true)
@@ -35,7 +35,7 @@ public class RestSendService implements MessageSender {
 
     // Track active HTTP requests to prevent overwhelming the connection pool
     //todo maybe use some adder so that it will be parallel friendly? (for each thread separate counter)
-    private final AtomicInteger activeRequests = new AtomicInteger(0);
+    private final LongAdder activeRequests = new LongAdder();
 
 
     public RestSendService(WebClient webClient) {
@@ -46,21 +46,21 @@ public class RestSendService implements MessageSender {
      * Check if we have capacity for more HTTP requests
      */
     public boolean hasCapacity() {
-        return activeRequests.get() < maxConcurrentRequests;
+        return activeRequests.sum() < maxConcurrentRequests;
     }
 
     /**
      * Get number of currently active HTTP requests
      */
     public int getActiveRequests() {
-        return activeRequests.get();
+        return activeRequests.intValue();
     }
 
     /**
      * Get number of available request slots
      */
     public int getAvailableCapacity() {
-        return maxConcurrentRequests - activeRequests.get();
+        return maxConcurrentRequests - activeRequests.intValue();
     }
 
     /**
@@ -82,7 +82,7 @@ public class RestSendService implements MessageSender {
             return CompletableFuture.completedFuture(new BatchSendResult(false, dataIds, client.getId()));
         }
 
-        activeRequests.incrementAndGet();
+        activeRequests.increment();
 
         // Create payload - convert all data entries to ExternalData
         List<ExternalData> payload = dataList.stream()
@@ -95,7 +95,7 @@ public class RestSendService implements MessageSender {
                 .retrieve()
                 .toBodilessEntity()
                 .timeout(Duration.ofMillis(timeoutMs))
-                .doFinally(signal -> activeRequests.decrementAndGet())  // Always decrement when done
+                .doFinally(signal -> activeRequests.decrement())  // Always decrement when done
                 .map(response -> new BatchSendResult(true, dataIds, client.getId()))
                 .onErrorResume(error -> Mono.just(new BatchSendResult(false, dataIds, client.getId())))
                 .toFuture();

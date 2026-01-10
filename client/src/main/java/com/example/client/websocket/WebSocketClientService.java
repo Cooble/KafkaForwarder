@@ -25,7 +25,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.LongAdder;
 
 @Service
 @ConditionalOnProperty(name = "client.transport.mode", havingValue = "websocket")
@@ -53,8 +53,8 @@ public class WebSocketClientService extends TextWebSocketHandler {
     private WebSocketSession session;
     private volatile boolean shouldReconnect = true;
 
-    private final AtomicLong totalEventsReceived = new AtomicLong(0);
-    private final AtomicLong eventsReceivedSinceLastLog = new AtomicLong(0);
+    private final LongAdder totalEventsReceived = new LongAdder();
+    private final LongAdder eventsReceivedSinceLastLog = new LongAdder();
     private final Set<Long> uniqueEventIds = Collections.newSetFromMap(new ConcurrentHashMap<>());
 
     @PostConstruct
@@ -146,8 +146,8 @@ public class WebSocketClientService extends TextWebSocketHandler {
         DataMessage dataMessage = objectMapper.convertValue(wsMessage.payload(), DataMessage.class);
 
         int count = dataMessage.data().size();
-        totalEventsReceived.addAndGet(count);
-        eventsReceivedSinceLastLog.addAndGet(count);
+        totalEventsReceived.add(count);
+        eventsReceivedSinceLastLog.add(count);
         dataMessage.data().forEach(data -> uniqueEventIds.add(data.totalCents()));
 
         log.debug("Received batch of {} events", count);
@@ -183,8 +183,8 @@ public class WebSocketClientService extends TextWebSocketHandler {
 
     @Scheduled(fixedRate = 1000)
     public void logStats() {
-        long eventsSinceLastLog = eventsReceivedSinceLastLog.getAndSet(0);
-        long total = totalEventsReceived.get();
+        long eventsSinceLastLog = eventsReceivedSinceLastLog.sumThenReset();
+        long total = totalEventsReceived.sum();
         int unique = uniqueEventIds.size();
         long duplicates = total - unique;
 

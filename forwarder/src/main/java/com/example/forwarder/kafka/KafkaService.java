@@ -16,7 +16,7 @@ import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.LongAdder;
 
 /**
  * Kafka listener that feeds events into the ForwarderPipeline.
@@ -38,7 +38,7 @@ public class KafkaService {
     @Autowired
     private MetricsService metricsService;
 
-    private final AtomicLong pendingBatches = new AtomicLong(0);
+    private final LongAdder pendingBatches = new LongAdder();
 
     @KafkaListener(topics = "${kafka.topics}", batch = "true")
     public void listenInternalDataBatch(List<ConsumerRecord<String, InternalData>> records, Acknowledgment acknowledgment) {
@@ -55,11 +55,11 @@ public class KafkaService {
             .toList();
 
         // Process asynchronously - don't block Kafka consumer thread
-        pendingBatches.incrementAndGet();
+        pendingBatches.increment();
         executorService.submitPipelineTask(() -> processBatch(inputs, acknowledgment))
             .exceptionally(ex -> {
                 log.error("Error processing batch of {} records - will NOT commit offset", records.size(), ex);
-                pendingBatches.decrementAndGet();
+                pendingBatches.decrement();
                 return null;
             });
     }
@@ -84,12 +84,12 @@ public class KafkaService {
             log.error("Failed to process batch, offset will NOT be committed - Kafka will redeliver", e);
             throw e;
         } finally {
-            pendingBatches.decrementAndGet();
+            pendingBatches.decrement();
         }
     }
 
     public long getPendingBatches() {
-        return pendingBatches.get();
+        return pendingBatches.sum();
     }
 }
 

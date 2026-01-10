@@ -7,7 +7,7 @@ import org.springframework.stereotype.Component;
 import jakarta.annotation.PreDestroy;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.LongAdder;
 
 /**
  * Centralized executor service for all forwarder async operations.
@@ -26,8 +26,8 @@ public class ForwarderExecutorService {
     private final ExecutorService ackExecutor;
     private final ExecutorService cleanupExecutor;
 
-    private final AtomicLong pendingPipelineTasks = new AtomicLong(0);
-    private final AtomicLong pendingAckTasks = new AtomicLong(0);
+    private final LongAdder pendingPipelineTasks = new LongAdder();
+    private final LongAdder pendingAckTasks = new LongAdder();
 
     public ForwarderExecutorService() {
         // Pipeline executor: handles main Kafka → DB → dispatch flow (was dbExecutor in KafkaService)
@@ -66,12 +66,12 @@ public class ForwarderExecutorService {
      * Submit a pipeline task (Kafka batch processing).
      */
     public CompletableFuture<Void> submitPipelineTask(Runnable task) {
-        pendingPipelineTasks.incrementAndGet();
+        pendingPipelineTasks.increment();
         return CompletableFuture.runAsync(() -> {
             try {
                 task.run();
             } finally {
-                pendingPipelineTasks.decrementAndGet();
+                pendingPipelineTasks.decrement();
             }
         }, pipelineExecutor);
     }
@@ -80,12 +80,12 @@ public class ForwarderExecutorService {
      * Submit an ACK processing task.
      */
     public CompletableFuture<Void> submitAckTask(Runnable task) {
-        pendingAckTasks.incrementAndGet();
+        pendingAckTasks.increment();
         return CompletableFuture.runAsync(() -> {
             try {
                 task.run();
             } finally {
-                pendingAckTasks.decrementAndGet();
+                pendingAckTasks.decrement();
             }
         }, ackExecutor);
     }
@@ -112,17 +112,17 @@ public class ForwarderExecutorService {
     }
 
     public long getPendingPipelineTasks() {
-        return pendingPipelineTasks.get();
+        return pendingPipelineTasks.sum();
     }
 
     public long getPendingAckTasks() {
-        return pendingAckTasks.get();
+        return pendingAckTasks.sum();
     }
 
     @PreDestroy
     public void shutdown() {
         log.info("Shutting down ForwarderExecutorService...");
-        log.info("Pending tasks - pipeline: {}, ack: {}", pendingPipelineTasks.get(), pendingAckTasks.get());
+        log.info("Pending tasks - pipeline: {}, ack: {}", pendingPipelineTasks.sum(), pendingAckTasks.sum());
 
         // Shutdown in order: pipeline first (stop accepting new work), then ack, then cleanup
         shutdownExecutor("pipeline", pipelineExecutor, 60);

@@ -12,7 +12,7 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.LongAdder;
 
 /**
  * Handles the result of sending data to clients.
@@ -36,13 +36,13 @@ public class DeliveryResultHandler {
 
     // Lock-free queue to decouple HTTP callbacks from DB updates
     private final ConcurrentLinkedQueue<DeliveryUpdate> updateQueue = new ConcurrentLinkedQueue<>();
-    private final AtomicLong queueSize = new AtomicLong(0);
-    private final AtomicLong droppedUpdates = new AtomicLong(0);
+    private final LongAdder queueSize = new LongAdder();
+    private final LongAdder droppedUpdates = new LongAdder();
     private static final int MAX_QUEUE_SIZE = 20000; // Soft limit
 
 
     // Track active async tasks to prevent overwhelming the DB
-    private final AtomicLong activeBatchTasks = new AtomicLong(0);
+    private final LongAdder activeBatchTasks = new LongAdder();
     private static final int MAX_CONCURRENT_BATCHES = 8;
 
     /**
@@ -58,9 +58,9 @@ public class DeliveryResultHandler {
     public void handleSendResult(MessageSender.SendResult result, DeliveryStatus status, String clientIdentifier) {
         if (result.success()) {
             // Check soft limit before adding (prevents unbounded growth)
-            long currentSize = queueSize.get();
+            long currentSize = queueSize.sum();
             if (currentSize > MAX_QUEUE_SIZE) {
-                droppedUpdates.incrementAndGet();
+                droppedUpdates.increment();
                 log.error("Update queue overflow! Size={}, Dropped data {} client {}",
                     currentSize, result.dataId(), result.clientId());
                 return;
@@ -68,7 +68,7 @@ public class DeliveryResultHandler {
 
             // Lock-free add - no contention between HTTP threads
             updateQueue.add(new DeliveryUpdate(result.dataId(), result.clientId(), status.getBornTimeMs(), true));
-            queueSize.incrementAndGet();
+            queueSize.increment();
         }
         // Leave as pending - ResendService will retry later
     }
@@ -80,9 +80,9 @@ public class DeliveryResultHandler {
      */
     public void handleWebSocketAck(Long dataId, Long clientId) {
         // Check soft limit before adding (prevents unbounded growth)
-        long currentSize = queueSize.get();
+        long currentSize = queueSize.sum();
         if (currentSize > MAX_QUEUE_SIZE) {
-            droppedUpdates.incrementAndGet();
+            droppedUpdates.increment();
             log.error("Update queue overflow! Size={}, Dropped WebSocket ACK for data {} client {}",
                 currentSize, dataId, clientId);
             return;
@@ -90,7 +90,7 @@ public class DeliveryResultHandler {
 
         // Lock-free add - no contention between WebSocket receive threads
         updateQueue.add(new DeliveryUpdate(dataId, clientId, 0, true));
-        queueSize.incrementAndGet();
+        queueSize.increment();
     }
 
     /**
@@ -110,8 +110,8 @@ public class DeliveryResultHandler {
     @Scheduled(fixedRate = 50)
     public void processUpdateQueue() {
         // Skip if we have too many concurrent batch tasks - prevents DB overload
-        if (activeBatchTasks.get() >= MAX_CONCURRENT_BATCHES) {
-            log.warn("Skipping batch drain - {} active tasks already running", activeBatchTasks.get());
+        if (activeBatchTasks.sum() >= MAX_CONCURRENT_BATCHES) {
+            log.warn("Skipping batch drain - {} active tasks already running", activeBatchTasks.sum());
             return;
         }
 
@@ -130,13 +130,13 @@ public class DeliveryResultHandler {
         }
 
         // Update queue size counter
-        queueSize.addAndGet(-drained);
+        queueSize.add(-drained);
 
         // Process asynchronously - DON'T block scheduler thread!
         final List<DeliveryUpdate> toProcess = batch;
         final int batchSize = toProcess.size();
 
-        activeBatchTasks.incrementAndGet();
+        activeBatchTasks.increment();
 
         executorService.submitAckTask(() -> {
             long startTime = System.currentTimeMillis();
@@ -158,7 +158,7 @@ public class DeliveryResultHandler {
             } catch (Exception e) {
                 log.error("Failed to process batch of {} updates: {}", batchSize, e.getMessage(), e);
             } finally {
-                activeBatchTasks.decrementAndGet();
+                activeBatchTasks.decrement();
             }
         });
     }
@@ -169,9 +169,9 @@ public class DeliveryResultHandler {
      */
     public void handleBatchSendResult(MessageSender.BatchSendResult batchResult, List<DeliveryStatus> statuses, String clientIdentifier) {
         if (batchResult.success()) {
-            long currentSize = queueSize.get();
+            long currentSize = queueSize.sum();
             if (currentSize + statuses.size() > MAX_QUEUE_SIZE) {
-                droppedUpdates.addAndGet(statuses.size());
+                droppedUpdates.add(statuses.size());
                 log.error("Update queue overflow! Size={}, Dropped {} data for client {}", currentSize, statuses.size(), clientIdentifier);
                 return;
             }
@@ -179,16 +179,16 @@ public class DeliveryResultHandler {
                 DeliveryStatus status = statuses.get(i);
                 updateQueue.add(new DeliveryUpdate(batchResult.dataIds().get(i), batchResult.clientId(), status.getBornTimeMs(), true));
             }
-            queueSize.addAndGet(statuses.size());
+            queueSize.add(statuses.size());
         }
         // If failed, leave as pending for retry
     }
 
     public long getQueueSize() {
-        return queueSize.get();
+        return queueSize.sum();
     }
 
     public long getDroppedUpdates() {
-        return droppedUpdates.get();
+        return droppedUpdates.sum();
     }
 }
