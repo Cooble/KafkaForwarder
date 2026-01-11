@@ -95,8 +95,8 @@ public class ClientRegistry {
 
         rebuildIndex(allClients);
 
-        log.info("Client registered/updated: {} (ID: {}), subscribed to topics: {}",
-                savedClient.getClientIdentifier(), savedClient.getId(), savedClient.getSubscribedTopics());
+        log.info("Client registered/updated: {} (ID: {}) (URL: {}) , subscribed to topics: {}",
+                savedClient.getClientIdentifier(), savedClient.getId(),  savedClient.getClientUrl(), savedClient.getSubscribedTopics());
 
         return savedClient;
     }

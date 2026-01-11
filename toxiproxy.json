@@ -1,0 +1,16 @@
+[
+  {
+    "name": "server_proxy",
+    "listen": "0.0.0.0:28081",
+    "upstream": "host.docker.internal:8081",
+    "enabled": true,
+    "toxics": []
+  },
+  {
+    "name": "client_proxy",
+    "listen": "0.0.0.0:28082",
+    "upstream": "host.docker.internal:8082",
+    "enabled": true,
+    "toxics": []
+  }
+]

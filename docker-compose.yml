@@ -38,6 +38,44 @@ services:
     environment:
       H2_OPTIONS: "-ifNotExists -tcpAllowOthers -webAllowOthers"
 
+
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.5.0
+    container_name: network_simulator
+    ports:
+      - "28474:8474" # Control API
+      - "28081:28081" # Proxy for Server
+      - "28082:28082" # Proxy for Client
+    volumes:
+      # Mount the config file into the container
+      - ./toxiproxy.json:/config/toxiproxy.json
+    # Tell Toxiproxy to load the config file
+    command: -config /config/toxiproxy.json -host 0.0.0.0
+    extra_hosts:
+      # Required for container to see your localhost apps
+      - "host.docker.internal:host-gateway"
+
+    profiles: ["chaos"]
+
+  toxiproxy-configurator:
+    image: curlimages/curl
+    depends_on:
+      - toxiproxy
+    volumes:
+      - ./toxics.json:/toxics.json
+    command: >
+      /bin/sh -c "
+      echo '--- DEBUG START ---';
+      while ! curl -s http://toxiproxy:8474/version > /dev/null; do echo 'Waiting for Toxiproxy...'; sleep 1; done;
+      echo '--- TOXIPROXY READY ---';
+      echo '--- INJECTING CHAOS ---';
+      curl -v -X POST -H 'Content-Type: application/json' -d @/toxics.json http://toxiproxy:8474/proxies/server_proxy/toxics;
+      curl -v -X POST -H 'Content-Type: application/json' -d @/toxics.json http://toxiproxy:8474/proxies/client_proxy/toxics;
+      echo '--- DONE ---';
+      "
+
+    profiles: ["chaos"]
+
 volumes:
   postgres_data:
   h2_data:
