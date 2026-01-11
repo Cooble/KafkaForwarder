@@ -19,26 +19,26 @@ public class MetricsService {
     // === ACTUAL MEASURED METRICS (Real data from the system) ===
     // LongAdder is much faster than AtomicLong under high contention
     // It keeps separate counters per thread and sums them only when asked.
-    private final LongAdder actualKafkaReceivedThisSecond = new LongAdder();  // Events received from Kafka
-    private final LongAdder actualKafkaReceivedTotal = new LongAdder();       // Total events from Kafka
+    // private final LongAdder actualKafkaReceivedThisSecond = new LongAdder();  // Events received from Kafka
+    // private final LongAdder actualKafkaReceivedTotal = new LongAdder();       // Total events from Kafka
     private final LongAdder actualKafkaAcceptedThisSecond = new LongAdder();  // Events persisted/accepted into DB
     private final LongAdder actualKafkaAcceptedTotal = new LongAdder();       // Cumulative accepted events
     private final LongAdder actualAcksThisSecond = new LongAdder();
     private final LongAdder actualAcksTotal = new LongAdder();
-    private final LongAdder actualSendEventsThisSecond = new LongAdder();     // Events included in outbound sends
-    private final LongAdder actualSendEventsTotal = new LongAdder();
-    private final LongAdder actualSendAttemptsThisSecond = new LongAdder();
-    private final LongAdder actualFailuresThisSecond = new LongAdder();
-    private final LongAdder actualFailuresTotal = new LongAdder();  // FIX: Cumulative failures (never resets)
-    private final LongAdder dbBatchCountThisSecond = new LongAdder();         // DB batches executed (acks persisted)
-    private final LongAdder dbRowsUpdatedThisSecond = new LongAdder();        // Rows updated per second
-    private final LongAdder dbTimeMsThisSecond = new LongAdder();             // Total DB time spent this second
-    private final LongAdder dbRowsUpdatedTotal = new LongAdder();             // Cumulative rows updated
-    private final LongAdder retryCyclesThisSecond = new LongAdder();          // Retry cycles executed
-    private final LongAdder retryEventsPendingThisSecond = new LongAdder();   // Events considered for retry
-    private final LongAdder retryEventsDispatchedThisSecond = new LongAdder();// Events actually re-dispatched
-    private final LongAdder retrySkippedCapacityThisSecond = new LongAdder(); // Cycles skipped due to capacity
-    private final LongAdder retryEventsDispatchedTotal = new LongAdder();     // Cumulative retried events sent
+    // private final LongAdder actualSendEventsThisSecond = new LongAdder();     // Events included in outbound sends
+    // private final LongAdder actualSendEventsTotal = new LongAdder();
+    // private final LongAdder actualSendAttemptsThisSecond = new LongAdder();
+    // private final LongAdder actualFailuresThisSecond = new LongAdder();
+    // private final LongAdder actualFailuresTotal = new LongAdder();  // FIX: Cumulative failures (never resets)
+    // private final LongAdder dbBatchCountThisSecond = new LongAdder();         // DB batches executed (acks persisted)
+    // private final LongAdder dbRowsUpdatedThisSecond = new LongAdder();        // Rows updated per second
+    // private final LongAdder dbTimeMsThisSecond = new LongAdder();             // Total DB time spent this second
+    // private final LongAdder dbRowsUpdatedTotal = new LongAdder();             // Cumulative rows updated
+    // private final LongAdder retryCyclesThisSecond = new LongAdder();          // Retry cycles executed
+    // private final LongAdder retryEventsPendingThisSecond = new LongAdder();   // Events considered for retry
+    // private final LongAdder retryEventsDispatchedThisSecond = new LongAdder();// Events actually re-dispatched
+    // private final LongAdder retrySkippedCapacityThisSecond = new LongAdder(); // Cycles skipped due to capacity
+    // private final LongAdder retryEventsDispatchedTotal = new LongAdder();     // Cumulative retried events sent
 
     // The "Recorder" handles the concurrency and buffering for us.
     // It is designed specifically for high-throughput recording.
@@ -106,7 +106,7 @@ public class MetricsService {
             csvWriter.println("#");
 
             // Clean CSV header with only time-series data (no constant columns)
-            csvWriter.println("TimeSeconds,Expected_EmissionRate,Actual_KafkaReceived,Actual_KafkaAccepted,Actual_SendEvents,Actual_Acks,Actual_SendAttempts,Actual_Failures,Actual_DbBatches,Actual_DbRowsUpdated,Actual_DbTimeMs,Actual_RetryCycles,Actual_RetryEvents,Actual_RetryDispatched,Actual_RetrySkippedCapacity,Actual_CumulativeKafkaReceived,Actual_CumulativeKafkaAccepted,Actual_CumulativeSendEvents,Actual_CumulativeAcks,Actual_CumulativeDbRowsUpdated,Actual_CumulativeRetryDispatched,Expected_CumulativeSent,Actual_CumulativeFailures,Actual_PendingDeliveries,Actual_Lag_Behind,Actual_SuccessRate_%,Actual_MeanLatency_ms,Actual_P50_ms,Actual_P95_ms,Actual_P99_ms,Actual_P999_ms,Actual_Max_ms");
+            csvWriter.println("TimeSeconds,Expected_CumulativeSent,Actual_CumulativeKafkaAccepted,Actual_P50_ms,Actual_P95_ms,Actual_CumulativeAcks,Actual_Lag_Behind");
             csvWriter.flush();
 
             // Print configuration to console
@@ -144,7 +144,7 @@ public class MetricsService {
 
     // --- KAFKA TRACKING (Called by KafkaService when events arrive) ---
     public void recordKafkaReceived(int eventCount) {
-        actualKafkaReceivedThisSecond.add(eventCount);
+        // Disabled metric
     }
 
     // --- PERSIST TRACKING (Called after data is stored) ---
@@ -154,32 +154,25 @@ public class MetricsService {
 
     // --- SEND TRACKING (Called by SendService/WebSocketSendService) ---
     public void recordSendAttempt(int count) {
-        actualSendAttemptsThisSecond.add(count);
+        // Disabled metric
     }
 
     public void recordSendEvents(int count) {
-        actualSendEventsThisSecond.add(count);
+        // Disabled metric
     }
 
     public void recordSendFailure(int count) {
-        actualFailuresThisSecond.add(count);
+        // Disabled metric
     }
 
     // --- RETRY TRACKING (Called by ResendService) ---
     public void recordRetryCycle(int pending, int dispatched, boolean skippedForCapacity) {
-        retryCyclesThisSecond.increment();
-        retryEventsPendingThisSecond.add(pending);
-        retryEventsDispatchedThisSecond.add(dispatched);
-        if (skippedForCapacity) {
-            retrySkippedCapacityThisSecond.increment();
-        }
+        // Disabled metric
     }
 
     // --- DB TRACKING (Called by DeliveryResultHandler when persisting ACKs) ---
     public void recordDbWrite(int rowsUpdated, long durationMs) {
-        dbBatchCountThisSecond.increment();
-        dbRowsUpdatedThisSecond.add(rowsUpdated);
-        dbTimeMsThisSecond.add(Math.max(durationMs, 0));
+        // Disabled metric
     }
 
     // --- COLD PATH (Called once per second) ---
@@ -196,27 +189,27 @@ public class MetricsService {
         intervalHistogram = actualLatencyRecorder.getIntervalHistogram(intervalHistogram);
 
         // 2. Get ACTUAL counts for this second and reset the adders
-        long actualKafkaReceived = actualKafkaReceivedThisSecond.sumThenReset();
+        // long actualKafkaReceived = actualKafkaReceivedThisSecond.sumThenReset();
         long actualKafkaAccepted = actualKafkaAcceptedThisSecond.sumThenReset();
-        long actualSendEvents = actualSendEventsThisSecond.sumThenReset();
+        // long actualSendEvents = actualSendEventsThisSecond.sumThenReset();
         long actualAcks = actualAcksThisSecond.sumThenReset();
-        long actualSendAttempts = actualSendAttemptsThisSecond.sumThenReset();
-        long actualFailures = actualFailuresThisSecond.sumThenReset();
-        long dbBatches = dbBatchCountThisSecond.sumThenReset();
-        long dbRowsUpdated = dbRowsUpdatedThisSecond.sumThenReset();
-        long dbTimeMs = dbTimeMsThisSecond.sumThenReset();
-        long retryCycles = retryCyclesThisSecond.sumThenReset();
-        long retryEvents = retryEventsPendingThisSecond.sumThenReset();
-        long retryDispatched = retryEventsDispatchedThisSecond.sumThenReset();
-        long retrySkippedCapacity = retrySkippedCapacityThisSecond.sumThenReset();
+        // long actualSendAttempts = actualSendAttemptsThisSecond.sumThenReset();
+        // long actualFailures = actualFailuresThisSecond.sumThenReset();
+        // long dbBatches = dbBatchCountThisSecond.sumThenReset();
+        // long dbRowsUpdated = dbRowsUpdatedThisSecond.sumThenReset();
+        // long dbTimeMs = dbTimeMsThisSecond.sumThenReset();
+        // long retryCycles = retryCyclesThisSecond.sumThenReset();
+        // long retryEvents = retryEventsPendingThisSecond.sumThenReset();
+        // long retryDispatched = retryEventsDispatchedThisSecond.sumThenReset();
+        // long retrySkippedCapacity = retrySkippedCapacityThisSecond.sumThenReset();
 
-        actualKafkaReceivedTotal.add(actualKafkaReceived);
+        // actualKafkaReceivedTotal.add(actualKafkaReceived);
         actualKafkaAcceptedTotal.add(actualKafkaAccepted);
-        actualSendEventsTotal.add(actualSendEvents);
+        // actualSendEventsTotal.add(actualSendEvents);
         actualAcksTotal.add(actualAcks);
-        actualFailuresTotal.add(actualFailures);  // FIX: Accumulate failures properly
-        dbRowsUpdatedTotal.add(dbRowsUpdated);
-        retryEventsDispatchedTotal.add(retryDispatched);
+        // actualFailuresTotal.add(actualFailures);  // FIX: Accumulate failures properly
+        // dbRowsUpdatedTotal.add(dbRowsUpdated);
+        // retryEventsDispatchedTotal.add(retryDispatched);
 
         // Time elapsed since first event (in seconds)
         long elapsedMs = System.currentTimeMillis() - firstEventTime;
@@ -239,73 +232,47 @@ public class MetricsService {
         }
 
         // 3. Calculate ACTUAL latency percentiles and stats
-        double actualMeanLatency = intervalHistogram.getMean();
+        // double actualMeanLatency = intervalHistogram.getMean();
         long actualP50Latency = intervalHistogram.getValueAtPercentile(50.0);
         long actualP95Latency = intervalHistogram.getValueAtPercentile(95.0);
-        long actualP99Latency = intervalHistogram.getValueAtPercentile(99.0);
-        long actualP999Latency = intervalHistogram.getValueAtPercentile(99.9);
-        long actualMaxLatency = intervalHistogram.getMaxValue();
+        // long actualP99Latency = intervalHistogram.getValueAtPercentile(99.0);
+        // long actualP999Latency = intervalHistogram.getValueAtPercentile(99.9);
+        // long actualMaxLatency = intervalHistogram.getMaxValue();
 
         // Get ACTUAL cumulative counts
-        long actualCumulativeKafkaReceived = actualKafkaReceivedTotal.sum();
+        // long actualCumulativeKafkaReceived = actualKafkaReceivedTotal.sum();
         long actualCumulativeKafkaAccepted = actualKafkaAcceptedTotal.sum();
-        long actualCumulativeSendEvents = actualSendEventsTotal.sum();
+        // long actualCumulativeSendEvents = actualSendEventsTotal.sum();
         long actualCumulativeAcks = actualAcksTotal.sum();
-        long actualCumulativeFailures = actualFailuresTotal.sum();  // FIX: Use the proper cumulative counter
-        long actualCumulativeDbRowsUpdated = dbRowsUpdatedTotal.sum();
-        long actualCumulativeRetryDispatched = retryEventsDispatchedTotal.sum();
+        // long actualCumulativeFailures = actualFailuresTotal.sum();  // FIX: Use the proper cumulative counter
+        // long actualCumulativeDbRowsUpdated = dbRowsUpdatedTotal.sum();
+        // long actualCumulativeRetryDispatched = retryEventsDispatchedTotal.sum();
 
         // Query DB for pending deliveries count (how healthy we are)
-        long actualPendingDeliveries = deliveryStatusRepository.countPending();
+        // long actualPendingDeliveries = deliveryStatusRepository.countPending();
 
         // Calculate lag: how far behind expected are we?
         long actualLagBehind = syntheticCumulativeSent - actualCumulativeAcks;
 
         // Calculate ACTUAL success rate
-        double actualSuccessRate = actualSendAttempts > 0
-            ? (actualAcks * 100.0 / actualSendAttempts)
-            : 100.0;
+        // double actualSuccessRate = actualSendAttempts > 0
+        //     ? (actualAcks * 100.0 / actualSendAttempts)
+        //     : 100.0;
 
         // 4. Write CSV with time-series data only (constants are in header comments)
-        csvWriter.printf("%d,%.2f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.2f,%.2f,%d,%d,%d,%d,%d%n",
+        csvWriter.printf("%d,%d,%d,%d,%d,%d,%d%n",
                 elapsedSeconds,                 // TimeSeconds
-                syntheticEmissionRate,          // Expected emission rate (calculated from config)
-                actualKafkaReceived,            // ACTUAL: Events received from Kafka this second
-                actualKafkaAccepted,            // ACTUAL: Events persisted/accepted this second
-                actualSendEvents,               // ACTUAL: Events included in outbound sends this second
-                actualAcks,                     // ACTUAL: Measured ACKs this second
-                actualSendAttempts,             // ACTUAL: Measured send attempts this second
-                actualFailures,                 // ACTUAL: Measured failures this second
-                dbBatches,                      // ACTUAL: DB batches executed this second
-                dbRowsUpdated,                  // ACTUAL: Rows updated this second
-                dbTimeMs,                       // ACTUAL: DB time spent this second (ms)
-                retryCycles,                    // ACTUAL: Retry cycles executed this second
-                retryEvents,                    // ACTUAL: Pending events considered for retry this second
-                retryDispatched,                // ACTUAL: Events actually re-dispatched this second
-                retrySkippedCapacity,           // ACTUAL: Retry cycles skipped due to capacity
-                actualCumulativeKafkaReceived,  // ACTUAL: Total events received from Kafka
-                actualCumulativeKafkaAccepted,  // ACTUAL: Total events persisted/accepted
-                actualCumulativeSendEvents,     // ACTUAL: Total events sent outbound
-                actualCumulativeAcks,           // ACTUAL: Total ACKs received
-                actualCumulativeDbRowsUpdated,  // ACTUAL: Total rows updated in DB
-                actualCumulativeRetryDispatched,// ACTUAL: Total events re-dispatched via retry
                 syntheticCumulativeSent,        // Expected total sent (calculated from config)
-                actualCumulativeFailures,       // ACTUAL: Total failures (FIXED)
-                actualPendingDeliveries,        // ACTUAL: Pending deliveries in DB (health indicator)
-                actualLagBehind,                // ACTUAL: How many messages behind expected
-                actualSuccessRate,              // ACTUAL: Success rate percentage
-                actualMeanLatency,              // ACTUAL: Mean latency in ms
+                actualCumulativeKafkaAccepted,  // ACTUAL: Total events persisted/accepted
                 actualP50Latency,               // ACTUAL: P50 latency
                 actualP95Latency,               // ACTUAL: P95 latency
-                actualP99Latency,               // ACTUAL: P99 latency
-                actualP999Latency,              // ACTUAL: P99.9 latency
-                actualMaxLatency);              // ACTUAL: Max latency this second
+                actualCumulativeAcks,           // ACTUAL: Total ACKs received
+                actualLagBehind);               // ACTUAL: How many messages behind expected
         csvWriter.flush();
 
-        if (actualAcks > 0 || actualSendAttempts > 0) {
-            System.out.printf("[%s] ACTUAL: %d acks/sec (%d sent, %d failed, %.1f%% success) | Total: %d acks vs %d expected (lag: %d) | Pending: %d | P99: %dms | Kafka: %d/sec%n",
-                    transportMode, actualAcks, actualSendAttempts, actualFailures, actualSuccessRate,
-                    actualCumulativeAcks, syntheticCumulativeSent, actualLagBehind, actualPendingDeliveries, actualP99Latency, actualKafkaReceived);
+        if (actualAcks > 0) {
+            System.out.printf("[%s] ACTUAL: %d acks/sec | Total: %d acks vs %d expected (lag: %d) | P95: %dms%n",
+                    transportMode, actualAcks, actualCumulativeAcks, syntheticCumulativeSent, actualLagBehind, actualP95Latency);
         }
     }
 }
