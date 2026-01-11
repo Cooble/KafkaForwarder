@@ -224,7 +224,19 @@ public class MetricsService {
 
         // === SYNTHETIC CALCULATION: Use shared RampupConfig for calculations ===
         double syntheticEmissionRate = rampupConfig.getCurrentRate(elapsedMs);
-        long syntheticCumulativeSent = rampupConfig.getCumulativeEvents(elapsedMs);
+        long timeBasedCumulativeSent = rampupConfig.getCumulativeEvents(elapsedMs);
+
+        // Get the final expected total from the ramp configuration
+        long finalRampTotal = rampupConfig.getCumulativeEvents(rampupConfig.getDurationMs());
+
+        // Once the ramp duration is complete, fix the expected cumulative sent
+        // to prevent it from continuing to increase
+        long syntheticCumulativeSent;
+        if (rampupConfig.isRampComplete(elapsedMs)) {
+            syntheticCumulativeSent = finalRampTotal;
+        } else {
+            syntheticCumulativeSent = timeBasedCumulativeSent;
+        }
 
         // 3. Calculate ACTUAL latency percentiles and stats
         double actualMeanLatency = intervalHistogram.getMean();
