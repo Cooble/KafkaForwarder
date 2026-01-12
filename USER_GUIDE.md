@@ -2,8 +2,10 @@
 Quick start guide for running the event producer, forwarder, and client applications with Kafka and optional network fault simulations.
 Via `app.properties` you can 
     - configure toxiproxy settings to simulate network faults,
+    - pick between H2 and PostgreSQL databases for the forwarder,
     - choose between REST and WebSocket transport modes between client and forwarder,
     - configure load patterns (constant rate or ramp-up) for the producer,
+
 
 ## 0. Prerequisites
 Make sure following programs are installed:
@@ -126,3 +128,33 @@ How to interpret
 
 Tips
 - Ensure `forwarder/rampup.properties` (or the forwarder's application properties) matches the producer ramp settings when you want an accurate expected reference.
+
+## Application properties (locations & quick reference)
+
+Where to find the main properties files:
+- `producer/src/main/resources/application.properties` — producer settings (ramp-up parameters)
+- `forwarder/src/main/resources/application.properties` — forwarder settings (transport mode (REST/WS), Kafka consumer, DB, tuning)
+- `forwarder/src/main/resources/rampup.properties` — forwarder's copy of the ramp configuration used to compute expected emission counts for metrics
+- `client/src/main/resources/application.properties` — client settings (transport mode, forwarder URL, registration behavior)
+
+Key settings you will likely change
+- Transport modes:
+  - `forwarder.transport.mode` and `client.transport.mode` — must be identical (values: `rest` or `websocket`).
+- Ramp/load:
+  - Producer: `rampup.start.rate`, `rampup.end.rate`, `rampup.duration.seconds`, `rampup.enabled`, `rampup.stop.after` (in `producer/application.properties`)
+  - Forwarder: keep `forwarder/rampup.properties` in sync for accurate `Expected_CumulativeSent` in the CSV
+- DB:
+  - `spring.profiles.active` (in forwarder) — `h2` or `postgres`
+- Toxiproxy:
+  - Uncomment `spring.profiles.active=toxiproxy` in `client/application.properties` to enable Toxiproxy overrides for testing network faults
+
+How to override at runtime
+- With Maven run arguments:
+  - mvn -pl producer spring-boot:run -Dspring-boot.run.arguments="--rampup.duration.seconds=30 --rampup.end.rate=8000"
+
+Recommended quick checklist before a test run
+1. Confirm `forwarder.transport.mode` and `client.transport.mode` match.  
+2. Confirm `producer` and `forwarder` ramp properties match (or set `rampup.enabled=false` for constant rate tests).  
+3. Ensure `docker-compose up -d` started Kafka and (optionally) Toxiproxy if you will use chaos.  
+4. Start `forwarder` first, then `client`, then `producer`.  
+5. Tail `metrics_*` CSV and forwarder logs to observe P95 and lag.
