@@ -25,7 +25,7 @@ public class RegistrationController {
     public void registerClient(HttpServletRequest request, @RequestBody RegistrationRequest registrationRequest) {
         String clientIp = request.getRemoteAddr();
 
-        clientRegistry.registerClient(new Client(clientIp, registrationRequest.clientUrl(), registrationRequest.topics()));
+        clientRegistry.registerClient(new Client(registrationRequest.clientIdentifier(), registrationRequest.clientUrl(), registrationRequest.topics()));
     }
 
     // TODO: Make an "unregister" method? or maybe screw it, its a demo

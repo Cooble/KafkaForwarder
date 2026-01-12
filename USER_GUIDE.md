@@ -148,9 +148,10 @@ Key settings you will likely change
 - Toxiproxy:
   - Uncomment `spring.profiles.active=toxiproxy` in `client/application.properties` to enable Toxiproxy overrides for testing network faults
 
-How to override at runtime
-- With Maven run arguments:
-  - mvn -pl producer spring-boot:run -Dspring-boot.run.arguments="--rampup.duration.seconds=30 --rampup.end.rate=8000"
+How to override at runtime ( you can spawn multiple clients with different ports)
+- For example to run client on port 8182:
+  - `mvn spring-boot:run -pl client "-Dspring-boot.run.arguments=--server.port=8182 --client.url=http://localhost:8182"`
+
 
 Recommended quick checklist before a test run
 1. Confirm `forwarder.transport.mode` and `client.transport.mode` match.  

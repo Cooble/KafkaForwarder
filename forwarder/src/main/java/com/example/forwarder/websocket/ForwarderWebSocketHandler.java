@@ -69,20 +69,16 @@ public class ForwarderWebSocketHandler extends TextWebSocketHandler {
     private void handleRegistration(WebSocketSession session, WebSocketMessage wsMessage) throws Exception {
         RegistrationRequest registration = objectMapper.convertValue(wsMessage.payload(), RegistrationRequest.class);
 
-        String clientIdentifier = session.getRemoteAddress() != null
-            ? session.getRemoteAddress().getAddress().getHostAddress()
-            : "unknown";
+        log.info("Client registering via WebSocket: {} for topics {}", registration.clientIdentifier(), registration.topics());
 
-        log.info("Client registering via WebSocket: {} for topics {}", clientIdentifier, registration.topics());
-
-        Client client = new Client(clientIdentifier, "", registration.topics());
+        Client client = new Client(registration.clientIdentifier(), registration.clientUrl(), registration.topics());
         Client savedClient = clientRegistry.registerClient(client);
 
         // Pass client identifier to session manager for logging
         sessionManager.addSession(savedClient.getId(), savedClient.getClientIdentifier(), session);
         sessionToClientId.put(session.getId(), savedClient.getId());
 
-        log.info("Client {} registered with ID {}", clientIdentifier, savedClient.getId());
+        log.info("Client {} registered with ID {}", registration.clientIdentifier(), savedClient.getId());
     }
 
     private void handleAcknowledgment(WebSocketSession session, WebSocketMessage wsMessage) throws Exception {

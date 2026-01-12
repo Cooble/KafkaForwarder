@@ -44,6 +44,12 @@ public class WebSocketClientService extends TextWebSocketHandler {
     @Value("${client.websocket.reconnect.delay.ms:2000}")
     private long reconnectDelayMs;
 
+    @Value("${client.url}")
+    private String clientUrl;
+
+    @Value("${client.identifier:#{null}}")
+    private String clientIdentifier;
+
     @Autowired
     private ObjectMapper objectMapper;
 
@@ -110,7 +116,8 @@ public class WebSocketClientService extends TextWebSocketHandler {
 
     private void sendRegistration() throws Exception {
         List<String> topics = Arrays.asList(subscribedTopicsStr.split(","));
-        RegistrationRequest registration = new RegistrationRequest("", topics);
+        String identifier = clientIdentifier != null ? clientIdentifier : clientUrl;
+        RegistrationRequest registration = new RegistrationRequest(identifier, clientUrl, topics);
 
         WebSocketMessage wsMessage = new WebSocketMessage(
             WebSocketMessage.MessageType.REGISTER,

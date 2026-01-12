@@ -35,6 +35,9 @@ public class RegistrationService {
     @Value("${client.registration.retry.delay.ms:2000}")
     private long retryDelayMs;
 
+    @Value("${client.identifier:#{null}}")
+    private String clientIdentifier;
+
     @Autowired
     private WebClient webClient;
 
@@ -49,7 +52,8 @@ public class RegistrationService {
         List<String> topics = Arrays.asList(subscribedTopicsStr.split(","));
         log.info("Registering client with forwarder for topics: {}", topics);
 
-        RegistrationRequest request = new RegistrationRequest(clientUrl, topics);
+        String identifier = clientIdentifier != null ? clientIdentifier : clientUrl;
+        RegistrationRequest request = new RegistrationRequest(identifier, clientUrl, topics);
 
         // Retry registration with exponential backoff
         int attempt = 0;
@@ -84,4 +88,3 @@ public class RegistrationService {
         }
     }
 }
-

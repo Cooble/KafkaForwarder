@@ -10,17 +10,19 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
 import org.springframework.beans.factory.annotation.Value;
 
 import java.sql.PreparedStatement;
 import java.sql.Timestamp;
 import java.util.*;
-
+import java.util.stream.Collectors;
 
 @Service
 public class DbService {
     private static final Logger log = LoggerFactory.getLogger(DbService.class);
+
+    // Safety limit for SQL 'IN' clauses (H2/Postgres limits are usually ~2000-3000)
+    private static final int IN_CLAUSE_BATCH_SIZE = 1000;
 
     private final boolean isPostgres;
 
@@ -39,12 +41,8 @@ public class DbService {
     private JdbcTemplate jdbcTemplate;
 
     /**
-     * Saves external data using native JDBC batch upsert - truly idempotent, single DB operation.
-     * Uses JDBC batch to execute all upserts in one round trip.
-     * Automatically uses H2 MERGE or PostgreSQL INSERT ON CONFLICT based on active profile.
-     *
-     * IMPORTANT: Only returns NEWLY INSERTED records, not already existing ones.
-     * This prevents duplicate DeliveryStatus creation on Kafka message redelivery.
+     * Saves external data using native JDBC batch upsert.
+     * CHUNKED to prevent parameter limit errors on 'IN' clauses.
      */
     @Transactional
     public List<ExternalDataTableEntry> saveAllExternalData(List<ExternalDataTableEntry> dataList) {
@@ -52,16 +50,19 @@ public class DbService {
             return List.of();
         }
 
-        // First, find which eventIds already exist (to exclude them from the result)
+        // 1. Identify existing IDs (Chunked)
         List<String> eventIds = dataList.stream()
                 .map(ExternalDataTableEntry::getEventId)
                 .toList();
-        Set<String> existingEventIds = new HashSet<>(externalDataRepository.findExistingEventIds(eventIds));
 
-        // Execute batch upsert - all statements in ONE database round trip
-        // Use database-specific SQL syntax
+        Set<String> existingEventIds = new HashSet<>();
+        for (List<String> batch : partition(eventIds, IN_CLAUSE_BATCH_SIZE)) {
+            existingEventIds.addAll(externalDataRepository.findExistingEventIds(batch));
+        }
+
+        // 2. Perform Batch Upsert (Native JDBC - already safe via loop)
         String sql = isPostgres
-            ? """
+                ? """
                 INSERT INTO external_data_table_entry (event_id, topic, document_id, customer_id, currency, total_cents, payload_json, sequence_number, received_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (event_id) DO UPDATE SET
@@ -74,25 +75,30 @@ public class DbService {
                     sequence_number = EXCLUDED.sequence_number,
                     received_at = EXCLUDED.received_at
                 """
-            : """
+                : """
                 MERGE INTO external_data_table_entry (event_id, topic, document_id, customer_id, currency, total_cents, payload_json, sequence_number, received_at)
                 KEY(event_id)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
 
-        jdbcTemplate.batchUpdate(sql, dataList, dataList.size(), (PreparedStatement ps, ExternalDataTableEntry data) -> {
-            ps.setString(1, data.getEventId());
-            ps.setString(2, data.getTopic());
-            ps.setString(3, data.getDocumentId());
-            ps.setString(4, data.getCustomerId());
-            ps.setString(5, data.getCurrency());
-            ps.setLong(6, data.getTotalCents());
-            ps.setString(7, data.getPayloadJson());
-            ps.setLong(8, data.getSequenceNumber());
-            ps.setTimestamp(9, Timestamp.valueOf(data.getReceivedAt()));
-        });
+        int batchSize = 100;
+        for (int i = 0; i < dataList.size(); i += batchSize) {
+            int end = Math.min(i + batchSize, dataList.size());
+            List<ExternalDataTableEntry> batch = dataList.subList(i, end);
+            jdbcTemplate.batchUpdate(sql, batch, batch.size(), (PreparedStatement ps, ExternalDataTableEntry data) -> {
+                ps.setString(1, data.getEventId());
+                ps.setString(2, data.getTopic());
+                ps.setString(3, data.getDocumentId());
+                ps.setString(4, data.getCustomerId());
+                ps.setString(5, data.getCurrency());
+                ps.setLong(6, data.getTotalCents());
+                ps.setString(7, data.getPayloadJson());
+                ps.setLong(8, data.getSequenceNumber());
+                ps.setTimestamp(9, Timestamp.valueOf(data.getReceivedAt()));
+            });
+        }
 
-        // Only fetch NEWLY INSERTED records (exclude already existing ones)
+        // 3. Fetch newly inserted records (Chunked)
         List<String> newEventIds = eventIds.stream()
                 .filter(id -> !existingEventIds.contains(id))
                 .toList();
@@ -103,39 +109,50 @@ public class DbService {
         }
 
         log.debug("Inserted {} new records, {} already existed", newEventIds.size(), existingEventIds.size());
-        return externalDataRepository.findByEventIdIn(newEventIds);
+
+        List<ExternalDataTableEntry> result = new ArrayList<>();
+        for (List<String> batch : partition(newEventIds, IN_CLAUSE_BATCH_SIZE)) {
+            result.addAll(externalDataRepository.findByEventIdIn(batch));
+        }
+        return result;
     }
 
-    /**
-     * Atomically saves external data and creates delivery statuses in a single transaction.
-     * This ensures data and statuses are created together, preventing orphaned data entries.
-     */
     @Transactional
     public PersistDataResult persistDataAndStatuses(List<ExternalDataTableEntry> dataList, List<ForwarderPipeline.TransformedEvent> transformedEvents, List<String> uniqueTopics) {
         Map<String, List<Client>> topicClientsMap = getClientsByTopics(uniqueTopics);
         List<ExternalDataTableEntry> saved = saveAllExternalData(dataList);
+
+        // Map saved entries by EventID for fast, correct lookup
+        Map<String, ExternalDataTableEntry> savedMap = saved.stream()
+                .collect(Collectors.toMap(ExternalDataTableEntry::getEventId, e -> e));
+
         List<ForwarderPipeline.DeliveryStatusRequest> statusRequests = new ArrayList<>();
         List<Long> orphanDataIds = new ArrayList<>();
 
-        for (int i = 0; i < saved.size(); i++) {
-            ExternalDataTableEntry data = saved.get(i);
+        for (int i = 0; i < dataList.size(); i++) {
+            ExternalDataTableEntry inputData = dataList.get(i);
+
+            // If the entry is not in 'savedMap', it was a duplicate/filtered out
+            ExternalDataTableEntry savedEntry = savedMap.get(inputData.getEventId());
+            if (savedEntry == null) continue;
+
             ForwarderPipeline.TransformedEvent event = transformedEvents.get(i);
             List<Client> clients = topicClientsMap.getOrDefault(event.topic(), List.of());
 
             if (clients.isEmpty()) {
-                orphanDataIds.add(data.getId());
+                orphanDataIds.add(savedEntry.getId());
                 continue;
             }
 
             for (Client client : clients) {
                 statusRequests.add(new ForwarderPipeline.DeliveryStatusRequest(
-                    data.getId(), client.getId(), event.bornTimeMs(), data, client
+                        savedEntry.getId(), client.getId(), event.bornTimeMs(), savedEntry, client
                 ));
             }
         }
 
         List<DeliveryStatus> statuses = List.of();
-        if (!saved.isEmpty()) {
+        if (!statusRequests.isEmpty()) {
             statuses = createDeliveryStatusesBatch(statusRequests);
         }
         return new PersistDataResult(saved, statuses, statusRequests, orphanDataIds);
@@ -165,13 +182,14 @@ public class DbService {
 
     @Transactional(readOnly = true)
     public Map<String, List<Client>> getClientsByTopics(List<String> topics) {
+        // This fetches all clients (usually small #) and filters in memory, so no SQL param limit here.
         List<Client> allClients = clientRepository.findAll();
 
         Map<String, List<Client>> topicClientsMap = new HashMap<>();
         for (String topic : topics) {
             List<Client> clientsForTopic = allClients.stream()
-                .filter(client -> client.getSubscribedTopics().contains(topic))
-                .toList();
+                    .filter(client -> client.getSubscribedTopics().contains(topic))
+                    .toList();
             topicClientsMap.put(topic, clientsForTopic);
         }
         return topicClientsMap;
@@ -183,16 +201,21 @@ public class DbService {
 
     @Transactional
     public List<DeliveryStatus> createDeliveryStatusesBatch(List<ForwarderPipeline.DeliveryStatusRequest> requests) {
-        List<DeliveryStatus> statuses = requests.stream()
-                .map(req -> new DeliveryStatus(req.dataId(), req.clientId(), req.bornTimeMs()))
-                .toList();
+        // Chunking this too, just to be safe if 'saveAll' triggers implicit selects or large batches
+        List<DeliveryStatus> allSaved = new ArrayList<>();
 
-        return deliveryStatusRepository.saveAll(statuses);
+        for (List<ForwarderPipeline.DeliveryStatusRequest> batch : partition(requests, IN_CLAUSE_BATCH_SIZE)) {
+            List<DeliveryStatus> statuses = batch.stream()
+                    .map(req -> new DeliveryStatus(req.dataId(), req.clientId(), req.bornTimeMs()))
+                    .toList();
+            allSaved.addAll(deliveryStatusRepository.saveAll(statuses));
+        }
+        return allSaved;
     }
 
     /**
-     * Marks delivery statuses as confirmed in batch - FAST version that just marks as confirmed.
-     * Cleanup happens separately via scheduled task, not inline.
+     * Marks delivery statuses as confirmed in batch.
+     * CHUNKED to prevent parameter limit errors on the UPDATE IN (...) clause.
      */
     @Transactional
     public int markAsConfirmedBatch(List<com.example.forwarder.DeliveryResultHandler.DeliveryUpdate> updates) {
@@ -200,30 +223,32 @@ public class DbService {
             return 0;
         }
 
-        // Build list of IDs to fetch in ONE query
-        Set<String> uniqueKeys = new HashSet<>();
-        List<Long> dataIds = new ArrayList<>();
-        List<Long> clientIds = new ArrayList<>();
+        int totalUpdated = 0;
 
-        for (var update : updates) {
-            String key = update.dataId() + "_" + update.clientId();
-            if (uniqueKeys.add(key)) {
-                dataIds.add(update.dataId());
-                clientIds.add(update.clientId());
+        for (List<com.example.forwarder.DeliveryResultHandler.DeliveryUpdate> batch : partition(updates, IN_CLAUSE_BATCH_SIZE)) {
+            Set<String> uniqueKeys = new HashSet<>();
+            List<Long> dataIds = new ArrayList<>();
+            List<Long> clientIds = new ArrayList<>();
+
+            for (var update : batch) {
+                String key = update.dataId() + "_" + update.clientId();
+                if (uniqueKeys.add(key)) {
+                    dataIds.add(update.dataId());
+                    clientIds.add(update.clientId());
+                }
+            }
+
+            if (!dataIds.isEmpty()) {
+                totalUpdated += deliveryStatusRepository.markAsConfirmedBulk(dataIds, clientIds);
             }
         }
 
-        // Fetch only the statuses we need to update in ONE query
-        // Using native query for maximum speed
-        int updated = deliveryStatusRepository.markAsConfirmedBulk(dataIds, clientIds);
-
-        return updated;
+        return totalUpdated;
     }
 
     public List<DeliveryStatus> getPendingDeliveries(long gracePeriodMs) {
-        // Calculate cutoff time - only retry entries older than grace period
-        // This prevents resending events that are still awaiting ACK processing
         long cutoffTimeMs = System.currentTimeMillis() - gracePeriodMs;
+        // This query limits results by nature, so no chunking on input needed here
         return deliveryStatusRepository.findPendingForRetry(cutoffTimeMs);
     }
 
@@ -231,53 +256,64 @@ public class DbService {
         return externalDataRepository.findById(id);
     }
 
+    /**
+     * CHUNKED fix for finding multiple entries by ID.
+     */
     public List<ExternalDataTableEntry> getExternalDataByIds(List<Long> ids) {
-        return externalDataRepository.findAllById(ids);
+        if (ids == null || ids.isEmpty()) return List.of();
+
+        List<ExternalDataTableEntry> results = new ArrayList<>();
+        for (List<Long> batch : partition(ids, IN_CLAUSE_BATCH_SIZE)) {
+            results.addAll(externalDataRepository.findAllById(batch));
+        }
+        return results;
     }
 
     public Optional<Client> getClientById(Long id) {
         return clientRepository.findById(id);
     }
 
+    /**
+     * CHUNKED fix for finding multiple clients by ID.
+     */
     public List<Client> getClientsByIds(List<Long> ids) {
-        return clientRepository.findAllById(ids);
+        if (ids == null || ids.isEmpty()) return List.of();
+
+        List<Client> results = new ArrayList<>();
+        for (List<Long> batch : partition(ids, IN_CLAUSE_BATCH_SIZE)) {
+            results.addAll(clientRepository.findAllById(batch));
+        }
+        return results;
     }
 
     @Transactional
     public void deleteExternalDataBatch(List<Long> externalDataIds) {
-        // Delete all delivery statuses in ONE query instead of multiple
-        deliveryStatusRepository.deleteByDataIds(externalDataIds);
-        // Delete all external data in one batch
-        externalDataRepository.deleteAllById(externalDataIds);
+        // CHUNKED deletion to prevent parameter limit errors
+        for (List<Long> batch : partition(externalDataIds, IN_CLAUSE_BATCH_SIZE)) {
+            deliveryStatusRepository.deleteByDataIds(batch);
+            externalDataRepository.deleteAllById(batch);
+        }
     }
 
-
-    /**
-     * Combined cleanup operation - deletes fully confirmed delivery statuses
-     * and then orphaned external data in a single transaction.
-     * Returns a record with counts of deleted items.
-     */
     @Transactional
     public CleanupResult cleanupConfirmedDataAndOrphans() {
-        // Step 1: Delete all delivery statuses for fully confirmed external data
         int deletedStatuses = deliveryStatusRepository.deleteFullyConfirmedDeliveryStatuses();
-
-        // Step 2: Delete external data entries that no longer have any delivery statuses
-        // This automatically cleans up the data from step 1
         int deletedData = externalDataRepository.deleteOrphanedData();
-
         return new CleanupResult(deletedStatuses, deletedData);
     }
 
     /**
-     * Simple record to hold cleanup results.
+     * Helper to split a list into sublists of size L.
      */
-    public record CleanupResult(int deletedStatuses, int deletedData) {
+    private <T> List<List<T>> partition(List<T> list, int size) {
+        List<List<T>> partitions = new ArrayList<>();
+        for (int i = 0; i < list.size(); i += size) {
+            partitions.add(list.subList(i, Math.min(i + size, list.size())));
+        }
+        return partitions;
     }
 
-    /**
-     * Result of persisting data and statuses atomically.
-     */
-    public record PersistDataResult(List<ExternalDataTableEntry> savedData, List<DeliveryStatus> statuses, List<ForwarderPipeline.DeliveryStatusRequest> statusRequests, List<Long> orphanDataIds) {
-    }
+    public record CleanupResult(int deletedStatuses, int deletedData) {}
+
+    public record PersistDataResult(List<ExternalDataTableEntry> savedData, List<DeliveryStatus> statuses, List<ForwarderPipeline.DeliveryStatusRequest> statusRequests, List<Long> orphanDataIds) {}
 }
