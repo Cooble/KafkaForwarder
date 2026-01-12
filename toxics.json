@@ -1,0 +1,8 @@
+{
+  "name": "latency_toxic",
+  "type": "latency",
+  "attributes": {
+    "latency": 2000,
+    "jitter": 1000
+  }
+}
