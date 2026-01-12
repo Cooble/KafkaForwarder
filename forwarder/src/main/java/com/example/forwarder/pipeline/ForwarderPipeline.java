@@ -5,6 +5,7 @@ import com.example.forwarder.MessageSender;
 import com.example.forwarder.MetricsService;
 import com.example.forwarder.TransformationService;
 import com.example.forwarder.db.DbService;
+import com.example.forwarder.db.DbService.PersistDataResult;
 import com.example.forwarder.model.Client;
 import com.example.forwarder.model.DeliveryStatus;
 import com.example.forwarder.model.ExternalDataTableEntry;
@@ -91,8 +92,19 @@ public class ForwarderPipeline {
         List<ExternalDataTableEntry> externalDataList = transformResult.externalDataList();
         List<TransformedEvent> transformedEvents = transformResult.transformedEvents();
 
-        // 1. Batch save all external data (single DB call)
-        List<ExternalDataTableEntry> savedData = dbService.saveAllExternalData(externalDataList);
+        // 1. Get clients for all unique topics (from in-memory cache)
+        List<String> uniqueTopics = transformedEvents.stream()
+            .map(TransformedEvent::topic)
+            .distinct()
+            .toList();
+
+        // 2. Atomically save data and create statuses
+        PersistDataResult pr = dbService.persistDataAndStatuses(externalDataList, transformedEvents, uniqueTopics);
+
+        List<ExternalDataTableEntry> savedData = pr.savedData();
+        List<DeliveryStatus> statuses = pr.statuses();
+        List<DeliveryStatusRequest> statusRequests = pr.statusRequests();
+        List<Long> orphanDataIds = pr.orphanDataIds();
 
         // Record how many Kafka events were accepted/persisted
         if (!savedData.isEmpty()) {
@@ -103,43 +115,12 @@ public class ForwarderPipeline {
             return PersistResult.empty();
         }
 
-        // 2. Get clients for all unique topics (from in-memory cache)
-        List<String> uniqueTopics = transformedEvents.stream()
-            .map(TransformedEvent::topic)
-            .distinct()
-            .toList();
-        Map<String, List<Client>> topicClientsMap = clientRegistry.getClientsByTopics(uniqueTopics);
-
-        // 3. Build delivery status requests and identify orphan data
-        List<DeliveryStatusRequest> statusRequests = new ArrayList<>();
-        List<Long> orphanDataIds = new ArrayList<>();
-
-        for (int i = 0; i < savedData.size(); i++) {
-            ExternalDataTableEntry data = savedData.get(i);
-            TransformedEvent event = transformedEvents.get(i);
-            List<Client> clients = topicClientsMap.getOrDefault(event.topic(), List.of());
-
-            if (clients.isEmpty()) {
-                orphanDataIds.add(data.getId());
-                continue;
-            }
-
-            for (Client client : clients) {
-                statusRequests.add(new DeliveryStatusRequest(
-                    data.getId(), client.getId(), event.bornTimeMs(), data, client
-                ));
-            }
-        }
-
-        // 4. Delete orphan data async (no subscribers)
+        // 3. Delete orphan data async (no subscribers)
         if (!orphanDataIds.isEmpty()) {
             executorService.submitCleanupTask(() -> dbService.deleteExternalDataBatch(orphanDataIds));
         }
 
-        // 5. Batch create all delivery statuses (single DB call)
-        List<DeliveryStatus> statuses = dbService.createDeliveryStatusesBatch(statusRequests);
-
-        // 6. Group by client for dispatch stage
+        // 4. Group by client for dispatch stage
         List<ClientBatch> clientBatches = groupByClient(statusRequests, statuses);
 
         return new PersistResult(savedData, statuses, clientBatches);

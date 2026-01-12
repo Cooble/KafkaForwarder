@@ -106,6 +106,41 @@ public class DbService {
         return externalDataRepository.findByEventIdIn(newEventIds);
     }
 
+    /**
+     * Atomically saves external data and creates delivery statuses in a single transaction.
+     * This ensures data and statuses are created together, preventing orphaned data entries.
+     */
+    @Transactional
+    public PersistDataResult persistDataAndStatuses(List<ExternalDataTableEntry> dataList, List<ForwarderPipeline.TransformedEvent> transformedEvents, List<String> uniqueTopics) {
+        Map<String, List<Client>> topicClientsMap = getClientsByTopics(uniqueTopics);
+        List<ExternalDataTableEntry> saved = saveAllExternalData(dataList);
+        List<ForwarderPipeline.DeliveryStatusRequest> statusRequests = new ArrayList<>();
+        List<Long> orphanDataIds = new ArrayList<>();
+
+        for (int i = 0; i < saved.size(); i++) {
+            ExternalDataTableEntry data = saved.get(i);
+            ForwarderPipeline.TransformedEvent event = transformedEvents.get(i);
+            List<Client> clients = topicClientsMap.getOrDefault(event.topic(), List.of());
+
+            if (clients.isEmpty()) {
+                orphanDataIds.add(data.getId());
+                continue;
+            }
+
+            for (Client client : clients) {
+                statusRequests.add(new ForwarderPipeline.DeliveryStatusRequest(
+                    data.getId(), client.getId(), event.bornTimeMs(), data, client
+                ));
+            }
+        }
+
+        List<DeliveryStatus> statuses = List.of();
+        if (!saved.isEmpty()) {
+            statuses = createDeliveryStatusesBatch(statusRequests);
+        }
+        return new PersistDataResult(saved, statuses, statusRequests, orphanDataIds);
+    }
+
     public Client upsertClient(Client client) {
         Client existingClient = clientRepository.findByClientIdentifier(client.getClientIdentifier());
         if (existingClient != null) {
@@ -239,5 +274,10 @@ public class DbService {
      */
     public record CleanupResult(int deletedStatuses, int deletedData) {
     }
-}
 
+    /**
+     * Result of persisting data and statuses atomically.
+     */
+    public record PersistDataResult(List<ExternalDataTableEntry> savedData, List<DeliveryStatus> statuses, List<ForwarderPipeline.DeliveryStatusRequest> statusRequests, List<Long> orphanDataIds) {
+    }
+}

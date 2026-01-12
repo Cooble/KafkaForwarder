@@ -58,7 +58,8 @@ public class WebSocketSendService implements MessageSender {
         }
 
         // Queue the batch - sender thread will handle actual sending
-        boolean success = sender.queueBatch(dataList);
-        return CompletableFuture.completedFuture(new BatchSendResult(success, dataIds, client.getId()));
+        // Note: We return success=false to keep deliveries pending until ACKed
+        sender.queueBatch(dataList);
+        return CompletableFuture.completedFuture(new BatchSendResult(false, dataIds, client.getId()));
     }
 }

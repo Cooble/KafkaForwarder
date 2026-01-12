@@ -80,7 +80,7 @@ public class WebSocketSessionSender implements Runnable {
         if (sendQueue.offer(task)) {
             // Return success immediately - we don't wait for ACK via futures
             // ACK will be handled separately and update DB directly
-            return true;
+            return false;
         } else {
             log.warn("Send queue full for client {} - dropping batch of {}", clientId, dataIds.size());
             return false;
